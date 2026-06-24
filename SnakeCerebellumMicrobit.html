@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ניווט נחש ניאון - מחובר למיקרוביט</title>
+    <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Rubik', sans-serif;
+            text-align: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden; 
+        }
+        .controls-container {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+            z-index: 20;
+        }
+        button {
+            font-family: 'Rubik', sans-serif;
+            font-size: 16px;
+            font-weight: bold;
+            padding: 12px 25px;
+            cursor: pointer;
+            border: 2px solid #00d2ff;
+            border-radius: 30px;
+            background-color: rgba(26, 26, 46, 0.8);
+            color: #00d2ff;
+            box-shadow: 0 0 15px rgba(0, 210, 255, 0.2), inset 0 0 10px rgba(0, 210, 255, 0.1);
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+        }
+        button:hover:not(:disabled) {
+            background-color: #00d2ff;
+            color: #1a1a2e;
+            box-shadow: 0 0 20px rgba(0, 210, 255, 0.6);
+            transform: scale(1.05);
+        }
+        button:disabled {
+            border-color: #444;
+            color: #666;
+            cursor: not-allowed;
+            box-shadow: none;
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+        #game-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 400px; 
+            height: 70vh;
+            max-height: 550px;
+            border-radius: 15px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.8);
+            background-color: #0f0f1b;
+            border: 3px solid #3a3a5a;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            display: block;
+            cursor: none; 
+        }
+        #status-board {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            justify-content: center;
+            width: 80%;
+            background: rgba(26, 26, 46, 0.8);
+            padding: 10px 15px;
+            border-radius: 12px;
+            box-sizing: border-box;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            z-index: 10;
+        }
+        #status {
+            font-size: 14px; /* הקטנתי מעט כדי שהטקסט הארוך ייכנס טוב */
+            font-weight: bold;
+            color: #00d2ff;
+            text-align: center;
+        }
+        #controls-info {
+            font-size: 14px;
+            color: #888;
+            margin-top: 15px;
+            z-index: 20;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="controls-container">
+        <button id="connectBtn">1. חיבור למיקרוביט</button>
+        <button id="startBtn" disabled>2. התחל משחק</button>
+    </div>
+    
+    <div id="game-wrapper">
+        <div id="status-board">
+            <div id="status">ממתין לחיבור...</div>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+    
+    <div id="controls-info">שליטה: עכבר או מקלדת (A/D או חצים)</div>
+
+    <script>
+        // --- תקשורת חכמה ורציפה עם המיקרוביט ---
+        let port;
+        let writer;
+        let lastSentState = '?';
+        let lastSendTime = 0;
+        
+        const SEND_INTERVAL = 100; 
+
+        const connectBtn = document.getElementById('connectBtn');
+        const startBtn = document.getElementById('startBtn');
+        const statusDiv = document.getElementById('status');
+
+        connectBtn.addEventListener('click', async () => {
+            try {
+                const ports = await navigator.serial.getPorts();
+                if (ports.length > 0) {
+                    port = ports[0];
+                } else {
+                    port = await navigator.serial.requestPort();
+                }
+                
+                await port.open({ baudRate: 115200 });
+                
+                const textEncoder = new TextEncoderStream();
+                textEncoder.readable.pipeTo(port.writable);
+                writer = textEncoder.writable.getWriter();
+                
+                statusDiv.innerText = "מחובר! אפשר להתחיל";
+                statusDiv.style.color = "#00ffaa";
+                startBtn.disabled = false;
+                connectBtn.style.display = 'none';
+                
+                sendState('?', true); 
+            } catch (error) {
+                console.error('שגיאת התחברות:', error);
+                // ההודעה החדשה למקרה של כישלון בהתחברות (מכשיר תפוס)
+                statusDiv.innerText = "הוציאו וחברו שוב את כבל ה-USB של המיקרוביט ונסו להתחבר שנית";
+                statusDiv.style.color = "#ff003c";
+            }
+        });
+
+        async function sendState(state, force = false) {
+            let now = Date.now();
+            if (force || (now - lastSendTime >= SEND_INTERVAL)) {
+                lastSentState = state;
+                lastSendTime = now;
+                if (writer) {
+                    try {
+                        await writer.write(state + '\n');
+                    } catch (e) {
+                        console.error("שגיאה בשליחה:", e);
+                    }
+                }
+            }
+        }
+
+        window.addEventListener('beforeunload', () => {
+            if (writer) writer.releaseLock();
+            if (port) port.close();
+        });
+
+        // --- מערכת המשחק ---
+        const wrapper = document.getElementById('game-wrapper');
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let gameRunning = false;
+        let player = { x: 0, y: 0, radius: 9 };
+        let snakeHistory = [];
+        const snakeLength = 20; 
+        
+        let path = [];
+        let pathWidth = 130; 
+        let pathSpeed = 4; 
+        let timeOffset = 0; 
+        
+        let particles = [];
+        let keys = { left: false, right: false };
+
+        function resizeCanvas() {
+            canvas.width = wrapper.clientWidth;
+            canvas.height = wrapper.clientHeight;
+            
+            if (!gameRunning && path.length === 0) {
+                player.x = canvas.width / 2;
+                player.y = canvas.height * 0.8;
+                initPath();
+                drawStaticScene();
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function initPath() {
+            path = [];
+            for(let i = -50; i < canvas.height + 50; i += 10) {
+                path.push({ y: i, center: canvas.width / 2 });
+            }
+            snakeHistory = [];
+            for(let i = 0; i < snakeLength; i++) {
+                snakeHistory.push({ x: player.x, y: player.y + i * 4 });
+            }
+            particles = [];
+        }
+
+        function createParticles(x, y, color) {
+            for(let i = 0; i < 3; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 1.0,
+                    color: color
+                });
+            }
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!gameRunning) return;
+            const rect = canvas.getBoundingClientRect();
+            player.x = e.clientX - rect.left;
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A' || e.key === 'ש') keys.left = true;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D' || e.key === 'ג') keys.right = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A' || e.key === 'ש') keys.left = false;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D' || e.key === 'ג') keys.right = false;
+        });
+
+        function gameLoop() {
+            if (!gameRunning) return;
+
+            timeOffset += 0.04;
+
+            const moveSpeed = 6;
+            if (keys.left) player.x -= moveSpeed;
+            if (keys.right) player.x += moveSpeed;
+
+            if (player.x < player.radius) player.x = player.radius;
+            if (player.x > canvas.width - player.radius) player.x = canvas.width - player.radius;
+
+            snakeHistory.unshift({ x: player.x, y: player.y });
+            if (snakeHistory.length > snakeLength) {
+                snakeHistory.pop();
+            }
+
+            for (let p of path) p.y += pathSpeed;
+
+            if (path[path.length - 1].y > canvas.height + 20) {
+                path.pop(); 
+                let newCenter = (canvas.width / 2) + Math.sin(timeOffset) * 100 + Math.sin(timeOffset * 0.5) * 40;
+                path.unshift({ y: path[0].y - 10, center: newCenter }); 
+            }
+
+            ctx.fillStyle = "#0f0f1b";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#00d2ff";
+            ctx.strokeStyle = "#00d2ff";
+            ctx.lineWidth = 3;
+            
+            ctx.beginPath();
+            ctx.moveTo(path[0].center - pathWidth/2, path[0].y);
+            for(let p of path) ctx.lineTo(p.center - pathWidth/2, p.y);
+            ctx.stroke(); 
+            
+            ctx.beginPath();
+            ctx.moveTo(path[0].center + pathWidth/2, path[0].y);
+            for(let p of path) ctx.lineTo(p.center + pathWidth/2, p.y);
+            ctx.stroke(); 
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = "rgba(0, 210, 255, 0.05)";
+            ctx.beginPath();
+            ctx.moveTo(path[0].center - pathWidth/2, path[0].y);
+            for(let p of path) ctx.lineTo(p.center - pathWidth/2, p.y);
+            for(let i = path.length - 1; i >= 0; i--) ctx.lineTo(path[i].center + pathWidth/2, path[i].y);
+            ctx.closePath();
+            ctx.fill();
+
+            let currentSegment = path.find(p => Math.abs(p.y - player.y) < 10);
+            let isOut = false;
+
+            if (currentSegment) {
+                if (player.x - player.radius < currentSegment.center - pathWidth/2 ||
+                    player.x + player.radius > currentSegment.center + pathWidth/2) {
+                    isOut = true;
+                }
+            } else {
+                isOut = true; 
+            }
+
+            let snakeGlowColor = isOut ? "#ff003c" : "#00ffaa";
+
+            if (isOut) {
+                sendState('S'); 
+                
+                ctx.fillStyle = "rgba(255, 0, 60, 0.15)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                createParticles(player.x, player.y, "#ff003c");
+                createParticles(player.x, player.y, "#ffff00");
+                
+                ctx.translate(Math.random()*4-2, Math.random()*4-2);
+            } else {
+                sendState('C'); 
+                ctx.setTransform(1, 0, 0, 1, 0, 0); 
+            }
+
+            // ציור חלקיקים
+            for(let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.05;
+                if(p.life <= 0) {
+                    particles.splice(i, 1);
+                } else {
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, Math.random() * 3, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                }
+            }
+
+            // ציור גוף הנחש
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = snakeGlowColor;
+            
+            for (let i = snakeHistory.length - 1; i >= 0; i--) {
+                let segment = snakeHistory[i];
+                let size = player.radius - (i * 0.35); 
+                
+                ctx.fillStyle = isOut ? `rgba(255, 0, 60, ${1 - i/snakeLength})` : `rgba(0, 255, 170, ${1 - i/snakeLength})`;
+                ctx.beginPath();
+                ctx.arc(segment.x, segment.y, Math.max(2, size), 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            ctx.shadowBlur = 0;
+            if (Math.sin(timeOffset * 15) > 0) {
+                ctx.strokeStyle = "#ff003c";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(player.x, player.y - player.radius);
+                ctx.lineTo(player.x, player.y - player.radius - 8);
+                ctx.lineTo(player.x - 4, player.y - player.radius - 12);
+                ctx.moveTo(player.x, player.y - player.radius - 8);
+                ctx.lineTo(player.x + 4, player.y - player.radius - 12);
+                ctx.stroke();
+            }
+
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = snakeGlowColor;
+            ctx.fillStyle = snakeGlowColor;
+            ctx.beginPath();
+            ctx.ellipse(player.x, player.y, player.radius + 1, player.radius + 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(player.x - 4, player.y - 3, 2.5, 0, Math.PI * 2); 
+            ctx.arc(player.x + 4, player.y - 3, 2.5, 0, Math.PI * 2); 
+            ctx.fill();
+
+            ctx.fillStyle = "#000000";
+            ctx.beginPath();
+            ctx.ellipse(player.x - 4, player.y - 3, 0.8, 2, 0, 0, Math.PI * 2);
+            ctx.ellipse(player.x + 4, player.y - 3, 0.8, 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            
+            // --- ציור הטקסט מתחת לשחקן ---
+            ctx.font = "bold 16px Rubik";
+            ctx.textAlign = "center";
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = "#000000"; 
+            if (isOut) {
+                ctx.fillStyle = "#ff003c";
+                ctx.fillText("שחקנ/ית, דייק/י את תנועתך", player.x, player.y + 35);
+            } else {
+                ctx.fillStyle = "#00ffaa";
+                ctx.fillText("יפה, תנועה מדויקת", player.x, player.y + 35);
+            }
+            ctx.shadowBlur = 0;
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function drawStaticScene() {
+            ctx.fillStyle = "#0f0f1b";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#00d2ff";
+            ctx.strokeStyle = "#00d2ff";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(canvas.width/2 - pathWidth/2, 0); ctx.lineTo(canvas.width/2 - pathWidth/2, canvas.height); ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(canvas.width/2 + pathWidth/2, 0); ctx.lineTo(canvas.width/2 + pathWidth/2, canvas.height); ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            ctx.fillStyle = "#00ffaa";
+            ctx.beginPath();
+            ctx.ellipse(player.x, player.y, player.radius + 1, player.radius + 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        startBtn.addEventListener('click', () => {
+            if (!gameRunning) {
+                gameRunning = true;
+                startBtn.innerText = "השהה משחק";
+                startBtn.style.borderColor = "#ff003c";
+                startBtn.style.color = "#ff003c";
+                if (path.length === 0) initPath(); 
+                sendState('C', true); 
+                gameLoop();
+            } else {
+                gameRunning = false;
+                startBtn.innerText = "המשך משחק";
+                startBtn.style.borderColor = "#00d2ff";
+                startBtn.style.color = "#00d2ff";
+                sendState('?', true); 
+            }
+        });
+        
+        resizeCanvas();
+        
+    </script>
+</body>
+</html>
