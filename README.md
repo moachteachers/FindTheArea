@@ -6,3 +6,5 @@ He'll send Microbit 'S', 15 times, in 100 ms intervals.
 Otherwise it will send 'C' in the same timing.
  
 The code on the Microbit will respond according to the codeForMicrobit.hex file (stormy response to S, calm response to C)
+
+link: 
