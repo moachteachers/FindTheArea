@@ -4,4 +4,4 @@ Otherwise it will send 'C' in the same timing.
  
 The code on the Microbit will respond according to the codeForMicrobit.hex file (stormy response to S, calm response to C)
 
-link: https://moachteachers.github.io/FindTheArea/AmygdalaElectrophysiology/
+link: https://moachteachers.github.io/FindTheArea/AmygdalaElectrophysiology/index.html
