@@ -3,4 +3,4 @@ Otherwise it will send 'C'.
  
 The code on the Microbit will respond according to the codeForMicrobit.hex file (stormy response to S, calm response to C)
 
-link: https://moachteachers.github.io/FindTheArea/CerebellumElectrophysiology/
+link: https://moachteachers.github.io/FindTheArea/CerebellumElectrophysiology/index.html
