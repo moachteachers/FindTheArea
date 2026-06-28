@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מירוץ אקסטרים: מסע עולמי</title>
+    <style>
+        body {
+            background:
+                radial-gradient(circle at 20% 0%, rgba(0,255,204,0.16), transparent 30%),
+                radial-gradient(circle at 80% 10%, rgba(255,0,180,0.16), transparent 28%),
+                linear-gradient(180deg, #07111f 0%, #0d0d14 55%, #06070c 100%);
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 10px;
+            overflow-x: hidden;
+        }
+        h1 {
+            color: #b8fff2;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+            text-shadow: 0 0 12px #00ffcc, 0 0 30px rgba(255,0,180,0.45);
+        }
+        
+        /* מיכל המשחק לשליטה במסך מלא */
+        #gameWrapper {
+            position: relative;
+            display: inline-block;
+            margin: 0 auto;
+            background: #111;
+            border-radius: 18px;
+            border: 6px solid rgba(255,255,255,0.12);
+            box-shadow: 0 0 35px rgba(0, 255, 204, 0.35), 0 0 80px rgba(255, 0, 180, 0.12);
+            overflow: hidden;
+        }
+
+        /* עיצוב במצב מסך מלא */
+        #gameWrapper:fullscreen {
+            border: none;
+            border-radius: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #000;
+        }
+        #gameWrapper:fullscreen canvas {
+            height: 100vh;
+            width: auto;
+            max-width: 100vw;
+        }
+
+        canvas {
+            display: block;
+            background-color: #111;
+            max-width: 100%;
+        }
+
+        /* מסך פתיחה */
+        #startOverlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(circle at center, rgba(0,255,204,0.16), rgba(0,0,0,0.9) 55%, rgba(0,0,0,0.96));
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .btn {
+            background: linear-gradient(45deg, #00ffcc, #0072ff);
+            color: #000;
+            border: none;
+            padding: 15px 40px;
+            font-size: 24px;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.6);
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-family: inherit;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(0, 255, 204, 0.9);
+        }
+
+        /* כפתור מסך מלא למטה */
+        #fullscreenBtn {
+            margin-top: 15px;
+            background: #222;
+            color: #fff;
+            border: 2px solid #00ffcc;
+            padding: 10px 20px;
+            font-size: 18px;
+            box-shadow: 0 0 10px rgba(0, 255, 204, 0.2);
+        }
+
+        .instructions {
+            max-width: 800px;
+            margin: 15px auto;
+            background: rgba(255, 255, 255, 0.08);
+            padding: 15px;
+            border-radius: 10px;
+            line-height: 1.6;
+            font-size: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+        strong { color: #ffcc00; }
+    </style>
+</head>
+<body>
+
+    <h1>מירוץ אקסטרים: מסע עולמי</h1>
+    
+    <div id="gameWrapper">
+        <canvas id="gameCanvas" width="900" height="600"></canvas>
+        <div id="startOverlay">
+            <button class="btn" id="startBtn">התחל משחק ▶️</button>
+        </div>
+    </div>
+    
+    <br>
+    <button class="btn" id="fullscreenBtn">מסך מלא 🔲</button>
+    
+    <div class="instructions">
+        <strong>איך משחקים?</strong> חצים ⬅️ ו- ➡️ כדי לזוז.<br>
+        <strong>מכשולים:</strong> פלדה, שער גרזנים, מתחרים, ו<strong>צמדי נינג'ות</strong>. כששער הגרזנים מופיע — הוא מופיע לבד, בלי מכשולים נוספים במסך.<br>
+        בדרך תראו גם את <strong>ברבי ובן</strong> בעגלה צבעונית מנופפים לשלום. אספו <strong>13 מטבעות</strong> כדי לקבל את מכונית העל!
+    </div>
+
+    <script>
+        var canvas = document.getElementById("gameCanvas");
+        var ctx = canvas.getContext("2d");
+        var wrapper = document.getElementById("gameWrapper");
+        
+        var isGameRunning = false;
+        var animFrameId;
+
+        // מידות ומיקומים
+        var roadLeft = 200;
+        var roadWidth = 500;
+
+        // משתני משחק
+        var player, keys, obstacles, axes, competitors, coins, sceneries, crosswalks, ninjas, paradeCarts;
+        var frames, coinsCount, gameOver, gameWon, roadOffset, hillPhase, boss;
+
+        var levels = [
+            { name: "עיר תחתית", bg: "#18223d", bg2: "#2a2a35", road: "#30323a", edge: "#4b5566", glow: "rgba(0,255,204,0.22)" },
+            { name: "ג'ונגל פראי", bg: "#0b2b13", bg2: "#1f4d19", road: "#243a2b", edge: "#4f7a22", glow: "rgba(70,255,120,0.18)" },
+            { name: "מדבר סהרה", bg: "#c78f48", bg2: "#f3cf8b", road: "#bd905c", edge: "#e7c877", glow: "rgba(255,220,120,0.18)" },
+            { name: "ספארי לוהט", bg: "#76512e", bg2: "#b88343", road: "#805a32", edge: "#bd9654", glow: "rgba(255,170,80,0.18)" },
+            { name: "כלב ענקי", bg: "#351d11", bg2: "#66411f", road: "#52331d", edge: "#7a4f2c", glow: "rgba(255,190,120,0.16)" }
+        ];
+
+        window.addEventListener("keydown", function(e) { if(keys) keys[e.keyCode] = true; });
+        window.addEventListener("keyup", function(e) { if(keys) keys[e.keyCode] = false; });
+
+        // אתחול המשחק בלחיצה על "התחל"
+        function resetGame() {
+            player = {
+                x: canvas.width / 2 - 30, y: 450, width: 60, height: 110, 
+                color1: '#00c6ff', color2: '#0072ff', speed: 8, hasNewCar: false,
+                lives: 3, invincibleTimer: 0
+            };
+            boss = {
+                active: false, x: canvas.width / 2 - 50, y: 30, width: 100, height: 160,
+                hp: 100, direction: 1, color1: '#ff416c', color2: '#ff4b2b'
+            };
+            keys = {}; obstacles = []; axes = []; competitors = []; coins = []; 
+            sceneries = []; crosswalks = []; ninjas = []; paradeCarts = [];
+            frames = 0; coinsCount = 0; roadOffset = 0; hillPhase = 0;
+            gameOver = false; gameWon = false;
+        }
+
+        // --- פונקציות ציור ---
+        function roundedRect(x, y, w, h, r) {
+            r = Math.min(r, w / 2, h / 2);
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+        }
+
+        function drawSoftGlow(x, y, radius, color) {
+            var g = ctx.createRadialGradient(x, y, 0, x, y, radius);
+            g.addColorStop(0, color);
+            g.addColorStop(1, "rgba(255,255,255,0)");
+            ctx.fillStyle = g;
+            ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+        }
+
+        function clearDangerObstacles() {
+            obstacles = [];
+            competitors = [];
+            crosswalks = [];
+            ninjas = [];
+        }
+
+        function spawnAxeGate(baseSpeed, currentLevelIdx) {
+            clearDangerObstacles();
+            axes.push({
+                y: -170,
+                speed: baseSpeed,
+                phase: Math.random() * Math.PI * 2,
+                phaseSpeed: 0.045 + (currentLevelIdx * 0.006),
+                length: 146,
+                leftPivot: roadLeft + 165,
+                rightPivot: roadLeft + roadWidth - 165,
+                pivotY: 0
+            });
+        }
+
+        function getAxeGeometry(axe) {
+            var openAmount = (Math.sin(axe.phase) + 1) / 2;
+            var leftAngle = 0.62 - openAmount * 1.02;
+            var rightAngle = -0.62 + openAmount * 1.02;
+            var pivotY = axe.y + 46;
+            return {
+                openAmount: openAmount,
+                pivotY: pivotY,
+                leftAngle: leftAngle,
+                rightAngle: rightAngle,
+                leftPivotX: axe.leftPivot,
+                rightPivotX: axe.rightPivot,
+                length: axe.length || 146
+            };
+        }
+
+        function rotateLocalPoint(pivotX, pivotY, angle, localX, localY) {
+            var cosA = Math.cos(angle);
+            var sinA = Math.sin(angle);
+            return {
+                x: pivotX + localX * cosA - localY * sinA,
+                y: pivotY + localX * sinA + localY * cosA
+            };
+        }
+
+        function getAxeBladePolygons(pivotX, pivotY, angle, length) {
+            // בדיקת פגיעה מדויקת יותר: רק הלהבים המתכתיים עצמם, בלי הידית/הקת ובלי אזור ריק מסביב.
+            // הפוליגונים מעט קטנים מהציור, כדי שהמשחק יהיה הוגן ולא יפסול כשהמכונית רק קרובה לגרזן.
+            var leftLocal = [
+                [-10, length - 6], [-35, length - 25], [-51, length + 4],
+                [-36, length + 31], [-9, length + 13]
+            ];
+            var rightLocal = [
+                [10, length - 6], [35, length - 25], [51, length + 4],
+                [36, length + 31], [9, length + 13]
+            ];
+            function transform(poly) {
+                var out = [];
+                for (var i = 0; i < poly.length; i++) {
+                    out.push(rotateLocalPoint(pivotX, pivotY, angle, poly[i][0], poly[i][1]));
+                }
+                return out;
+            }
+            return [transform(leftLocal), transform(rightLocal)];
+        }
+
+        function pointInRect(p, r) {
+            return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
+        }
+
+        function pointInPolygon(point, polygon) {
+            var inside = false;
+            for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                var xi = polygon[i].x, yi = polygon[i].y;
+                var xj = polygon[j].x, yj = polygon[j].y;
+                var intersects = ((yi > point.y) !== (yj > point.y)) &&
+                    (point.x < (xj - xi) * (point.y - yi) / ((yj - yi) || 0.00001) + xi);
+                if (intersects) inside = !inside;
+            }
+            return inside;
+        }
+
+        function segmentsIntersect(a, b, c, d) {
+            function orient(p, q, r) {
+                return (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+            }
+            function onSegment(p, q, r) {
+                return q.x <= Math.max(p.x, r.x) && q.x >= Math.min(p.x, r.x) &&
+                       q.y <= Math.max(p.y, r.y) && q.y >= Math.min(p.y, r.y);
+            }
+            var o1 = orient(a, b, c);
+            var o2 = orient(a, b, d);
+            var o3 = orient(c, d, a);
+            var o4 = orient(c, d, b);
+            if (o1 * o2 < 0 && o3 * o4 < 0) return true;
+            if (Math.abs(o1) < 0.0001 && onSegment(a, c, b)) return true;
+            if (Math.abs(o2) < 0.0001 && onSegment(a, d, b)) return true;
+            if (Math.abs(o3) < 0.0001 && onSegment(c, a, d)) return true;
+            if (Math.abs(o4) < 0.0001 && onSegment(c, b, d)) return true;
+            return false;
+        }
+
+        function polygonIntersectsRect(polygon, rect) {
+            var rectPoints = [
+                {x: rect.x, y: rect.y},
+                {x: rect.x + rect.width, y: rect.y},
+                {x: rect.x + rect.width, y: rect.y + rect.height},
+                {x: rect.x, y: rect.y + rect.height}
+            ];
+            for (var i = 0; i < polygon.length; i++) if (pointInRect(polygon[i], rect)) return true;
+            for (var j = 0; j < rectPoints.length; j++) if (pointInPolygon(rectPoints[j], polygon)) return true;
+            for (var p = 0; p < polygon.length; p++) {
+                var p2 = (p + 1) % polygon.length;
+                for (var r = 0; r < rectPoints.length; r++) {
+                    var r2 = (r + 1) % rectPoints.length;
+                    if (segmentsIntersect(polygon[p], polygon[p2], rectPoints[r], rectPoints[r2])) return true;
+                }
+            }
+            return false;
+        }
+
+        function drawScenery(item, levelIdx) {
+            ctx.save();
+            ctx.translate(item.x, item.y);
+            if (levelIdx === 0) {
+                ctx.fillStyle = (item.x < roadLeft) ? "#444" : "#555"; ctx.fillRect(0, 0, 70, 140);
+                ctx.fillStyle = "#222"; ctx.fillRect(5, 5, 60, 130);
+                ctx.fillStyle = "rgba(255, 255, 100, 0.8)";
+                for(var wx = 10; wx < 60; wx += 20) {
+                    for(var wy = 15; wy < 120; wy += 25) {
+                        if ((item.id + wx + wy) % 3 !== 0) ctx.fillRect(wx, wy, 12, 15);
+                    }
+                }
+            } 
+            else if (levelIdx === 1) {
+                ctx.fillStyle = "#3e2723"; ctx.fillRect(20, 40, 20, 60);
+                ctx.fillStyle = "#1b5e20"; ctx.beginPath(); ctx.arc(30, 30, 40, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = "#2e7d32"; ctx.beginPath(); ctx.arc(15, 15, 30, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(45, 15, 30, 0, Math.PI*2); ctx.fill();
+            }
+            else if (levelIdx === 2) {
+                if (item.isDune) {
+                    ctx.fillStyle = "#e0bb7d"; ctx.beginPath(); ctx.arc(50, 50, 80, Math.PI, 0); ctx.fill();
+                } else {
+                    ctx.fillStyle = "#2e8b57"; ctx.fillRect(20, 0, 16, 70);
+                    ctx.fillRect(5, 25, 15, 12); ctx.fillRect(5, 10, 12, 20);
+                    ctx.fillRect(36, 35, 15, 12); ctx.fillRect(39, 20, 12, 20);
+                }
+            }
+            else if (levelIdx === 3) {
+                ctx.fillStyle = "#6d4c41"; ctx.beginPath(); ctx.arc(30, 30, 25, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = "#5d4037"; ctx.beginPath(); ctx.arc(45, 40, 20, 0, Math.PI*2); ctx.fill();
+                if (item.id % 2 === 0) {
+                    ctx.fillStyle = "#cddc39"; ctx.fillRect(10, 45, 4, 15); ctx.fillRect(20, 40, 4, 20);
+                }
+            }
+            else if (levelIdx === 4) {
+                if (item.isDune) {
+                    ctx.fillStyle = "#eee"; ctx.fillRect(20, 30, 40, 15);
+                    ctx.beginPath(); ctx.arc(20, 30, 12, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(20, 45, 12, 0, Math.PI*2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(60, 30, 12, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(60, 45, 12, 0, Math.PI*2); ctx.fill();
+                } else {
+                    ctx.fillStyle = "#3e1c00"; ctx.beginPath(); ctx.moveTo(0, 50); ctx.lineTo(20, 0); ctx.lineTo(40, 50); ctx.fill();
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawNinjas(n) {
+            ctx.save(); ctx.translate(n.x, n.y);
+            function drawSingleNinja(nx, ny) {
+                ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.beginPath(); ctx.arc(nx + 10, ny + 25, 12, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(nx + 10, ny + 10, 10, 0, Math.PI*2); ctx.fill();
+                ctx.fillRect(nx + 2, ny + 15, 16, 20);
+                ctx.fillStyle = "#ff0000"; ctx.fillRect(nx + 2, ny + 6, 16, 4);
+                ctx.fillStyle = "white"; ctx.fillRect(nx + 5, ny + 12, 3, 3); ctx.fillRect(nx + 12, ny + 12, 3, 3);
+                ctx.strokeStyle = "silver"; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(nx - 5, ny + 15); ctx.lineTo(nx - 15, ny + 5); ctx.stroke();
+            }
+            drawSingleNinja(0, 0); drawSingleNinja(25, 0);
+            ctx.restore();
+        }
+
+        function drawBarbieBenCart(cart) {
+            var wave = Math.sin(frames * 0.16 + cart.waveOffset);
+            ctx.save();
+            ctx.translate(cart.x, cart.y);
+            if (cart.side === "right") { ctx.scale(-1, 1); ctx.translate(-150, 0); }
+
+            // צל ועגלה
+            ctx.fillStyle = "rgba(0,0,0,0.28)";
+            ctx.beginPath(); ctx.ellipse(75, 93, 74, 16, 0, 0, Math.PI * 2); ctx.fill();
+            var wagonGrad = ctx.createLinearGradient(10, 30, 140, 90);
+            wagonGrad.addColorStop(0, "#ff6bd6"); wagonGrad.addColorStop(0.55, "#ffb347"); wagonGrad.addColorStop(1, "#ffd86b");
+            ctx.fillStyle = wagonGrad; roundedRect(15, 45, 120, 38, 12); ctx.fill();
+            ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 3; ctx.stroke();
+            ctx.strokeStyle = "#d27c24"; ctx.lineWidth = 5;
+            ctx.beginPath(); ctx.moveTo(14, 54); ctx.lineTo(-12, 35); ctx.stroke();
+            ctx.fillStyle = "#222";
+            ctx.beginPath(); ctx.arc(38, 86, 12, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(112, 86, 12, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#e9f7ff";
+            ctx.beginPath(); ctx.arc(38, 86, 5, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(112, 86, 5, 0, Math.PI*2); ctx.fill();
+
+            function drawPerson(cx, cy, hair, shirt, isBarbie) {
+                // גוף
+                ctx.fillStyle = shirt;
+                if (isBarbie) {
+                    ctx.beginPath(); ctx.moveTo(cx, cy + 25); ctx.lineTo(cx - 18, cy + 62); ctx.lineTo(cx + 18, cy + 62); ctx.closePath(); ctx.fill();
+                } else {
+                    roundedRect(cx - 13, cy + 25, 26, 38, 8); ctx.fill();
+                }
+                // ראש ושיער
+                ctx.fillStyle = "#ffd7bd"; ctx.beginPath(); ctx.arc(cx, cy + 12, 15, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = hair;
+                ctx.beginPath(); ctx.arc(cx, cy + 5, 16, Math.PI, Math.PI*2); ctx.fill();
+                if (isBarbie) { ctx.fillRect(cx - 16, cy + 4, 7, 24); ctx.fillRect(cx + 9, cy + 4, 7, 24); }
+                ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(cx - 5, cy + 12, 2, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(cx + 5, cy + 12, 2, 0, Math.PI*2); ctx.fill();
+                ctx.strokeStyle = "#b94444"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy + 17, 5, 0.15, Math.PI - 0.15); ctx.stroke();
+                // יד מנופפת
+                ctx.strokeStyle = "#ffd7bd"; ctx.lineWidth = 6; ctx.lineCap = "round";
+                var armEndX = cx + 20 + wave * 8;
+                var armEndY = cy + 10 - Math.abs(wave) * 14;
+                ctx.beginPath(); ctx.moveTo(cx + 11, cy + 34); ctx.lineTo(armEndX, armEndY); ctx.stroke();
+                ctx.fillStyle = "#ffd7bd"; ctx.beginPath(); ctx.arc(armEndX, armEndY, 4, 0, Math.PI*2); ctx.fill();
+            }
+
+            drawPerson(54, 11, "#ffe15c", "#ff48c4", true);
+            drawPerson(96, 14, "#5b3216", "#39a7ff", false);
+
+            ctx.fillStyle = "rgba(255,255,255,0.75)";
+            ctx.font = "bold 12px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("שלום!", 76, 34 + wave * 2);
+            ctx.restore();
+        }
+
+        function drawCar(x, y, w, h, c1, c2, isUpgraded, isPlayer) {
+            if (isPlayer && player.invincibleTimer > 0 && Math.floor(player.invincibleTimer / 4) % 2 === 0) return;
+            ctx.save(); ctx.translate(x, y);
+            ctx.fillStyle = "rgba(0,0,0,0.55)"; roundedRect(10, 10, w, h, 14); ctx.fill();
+            ctx.shadowColor = c1; ctx.shadowBlur = isPlayer ? 18 : 8;
+            var grad = ctx.createLinearGradient(0, 0, w, h);
+            grad.addColorStop(0, c1); grad.addColorStop(1, c2);
+            ctx.fillStyle = grad; roundedRect(0, 0, w, h, 14); ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = "rgba(0,0,0,0.2)";
+            ctx.beginPath(); ctx.moveTo(w*0.2, 0); ctx.lineTo(w*0.8, 0); ctx.lineTo(w*0.9, h*0.25); ctx.lineTo(w*0.1, h*0.25); ctx.fill();
+            if (isUpgraded) {
+                ctx.fillStyle = "#111"; ctx.fillRect(-8, h - 15, w + 16, 12);
+                ctx.fillStyle = c1; ctx.fillRect(5, h - 12, w - 10, 6);
+                ctx.fillStyle = "#555"; ctx.fillRect(w*0.3, h - 30, w*0.4, 15);
+                ctx.fillStyle = "#888"; ctx.fillRect(w*0.35, h - 28, w*0.3, 3);
+            }
+            ctx.fillStyle = c2; ctx.fillRect(-8, h * 0.35, 8, 16); ctx.fillRect(w, h * 0.35, 8, 16);
+            ctx.fillStyle = "#111"; ctx.fillRect(w * 0.1, h * 0.25, w * 0.8, h * 0.25); ctx.fillRect(w * 0.15, h * 0.65, w * 0.7, h * 0.15);
+            ctx.fillStyle = "rgba(255,255,255,0.2)";
+            ctx.beginPath(); ctx.moveTo(w*0.1, h*0.25); ctx.lineTo(w*0.5, h*0.25); ctx.lineTo(w*0.3, h*0.5); ctx.lineTo(w*0.1, h*0.5); ctx.fill();
+            ctx.fillStyle = "#ffcc00"; ctx.beginPath(); ctx.arc(w / 2, h * 0.38, w * 0.15, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = "#222"; ctx.fillRect(w / 2 - w * 0.1, h * 0.35, w * 0.2, 8);
+            ctx.fillStyle = "#050505"; ctx.fillRect(-6, h * 0.1, 6, h * 0.2); ctx.fillRect(w, h * 0.1, 6, h * 0.2);
+            ctx.fillRect(-6, h * 0.65, 6, h * 0.2); ctx.fillRect(w, h * 0.65, 6, h * 0.2);
+            ctx.fillStyle = "#e6ffff"; ctx.shadowBlur = 20; ctx.shadowColor = "#00ffff";
+            ctx.fillRect(w * 0.1, 2, 12, 6); ctx.fillRect(w * 0.9 - 12, 2, 12, 6); ctx.shadowBlur = 0;
+            ctx.fillStyle = "#ff1a1a"; ctx.fillRect(w * 0.05, h - 8, w * 0.3, 6); ctx.fillRect(w * 0.65, h - 8, w * 0.3, 6);
+            ctx.restore();
+        }
+
+        function drawObstacle(obs) {
+            ctx.save();
+            ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 10; ctx.shadowOffsetY = 5;
+            var grad = ctx.createLinearGradient(obs.x, obs.y, obs.x + obs.width, obs.y + obs.height);
+            grad.addColorStop(0, '#ecf6ff'); grad.addColorStop(0.5, '#91a8bd'); grad.addColorStop(1, '#354555');
+            ctx.fillStyle = grad; roundedRect(obs.x, obs.y, obs.width, obs.height, 8); ctx.fill();
+            ctx.strokeStyle = '#1d2b38'; ctx.lineWidth = 4; ctx.stroke();
+            ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(obs.x + 8, obs.y + obs.height - 8); ctx.lineTo(obs.x + obs.width - 8, obs.y + 8); ctx.stroke();
+            ctx.fillStyle = "#27313b"; ctx.beginPath();
+            ctx.arc(obs.x + 10, obs.y + 10, 4, 0, Math.PI*2); ctx.fill(); ctx.arc(obs.x + obs.width - 10, obs.y + 10, 4, 0, Math.PI*2); ctx.fill();
+            ctx.arc(obs.x + 10, obs.y + obs.height - 10, 4, 0, Math.PI*2); ctx.fill(); ctx.arc(obs.x + obs.width - 10, obs.y + obs.height - 10, 4, 0, Math.PI*2); ctx.fill();
+            ctx.restore();
+        }
+
+        function drawAxe(axe) {
+            var g = getAxeGeometry(axe);
+
+            // סככת עץ מעל הכביש
+            ctx.save();
+            ctx.shadowColor = "rgba(0,0,0,0.55)";
+            ctx.shadowBlur = 12;
+            ctx.shadowOffsetY = 5;
+            var roofGrad = ctx.createLinearGradient(roadLeft, axe.y, roadLeft + roadWidth, axe.y + 35);
+            roofGrad.addColorStop(0, "#5b3518");
+            roofGrad.addColorStop(0.5, "#9b6328");
+            roofGrad.addColorStop(1, "#4a2a12");
+            ctx.fillStyle = roofGrad;
+            roundedRect(roadLeft - 28, axe.y + 5, roadWidth + 56, 34, 8); ctx.fill();
+            ctx.fillStyle = "rgba(255,230,160,0.18)";
+            for (var plank = roadLeft - 10; plank < roadLeft + roadWidth + 30; plank += 64) {
+                roundedRect(plank, axe.y + 9, 48, 26, 5); ctx.fill();
+            }
+            ctx.strokeStyle = "rgba(45,22,8,0.7)"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(roadLeft - 15, axe.y + 27); ctx.lineTo(roadLeft + roadWidth + 15, axe.y + 27); ctx.stroke();
+            ctx.fillStyle = "#6b3b17";
+            roundedRect(roadLeft + 18, axe.y + 26, 22, 88, 6); ctx.fill();
+            roundedRect(roadLeft + roadWidth - 40, axe.y + 26, 22, 88, 6); ctx.fill();
+            ctx.restore();
+
+            function drawOneAxe(pivotX, pivotY, angle, bladeFlip) {
+                ctx.save();
+                ctx.translate(pivotX, pivotY);
+                ctx.rotate(angle);
+
+                // שרשרת תלייה
+                ctx.strokeStyle = "#d8d8d8"; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.moveTo(0, -18); ctx.lineTo(0, 6); ctx.stroke();
+                ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = "#f3c36a"; ctx.lineWidth = 3; ctx.stroke();
+
+                // ידית עץ
+                var handleGrad = ctx.createLinearGradient(-5, 0, 5, g.length);
+                handleGrad.addColorStop(0, "#a86a2b");
+                handleGrad.addColorStop(1, "#4a250b");
+                ctx.strokeStyle = handleGrad; ctx.lineWidth = 10; ctx.lineCap = "round";
+                ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, g.length); ctx.stroke();
+                ctx.strokeStyle = "rgba(255,220,120,0.35)"; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(-3, 12); ctx.lineTo(-3, g.length - 10); ctx.stroke();
+
+                // ראש גרזן כפול מבריק
+                ctx.translate(0, g.length);
+                var metal = ctx.createLinearGradient(-55, -35, 55, 35);
+                metal.addColorStop(0, "#f8fbff"); metal.addColorStop(0.45, "#9fa9b8"); metal.addColorStop(1, "#ffffff");
+                ctx.fillStyle = metal;
+                ctx.strokeStyle = "#4f5966"; ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(-8, -8); ctx.quadraticCurveTo(-48, -38, -58, 5); ctx.quadraticCurveTo(-40, 42, -6, 15);
+                ctx.lineTo(6, 15); ctx.quadraticCurveTo(40, 42, 58, 5); ctx.quadraticCurveTo(48, -38, 8, -8);
+                ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = "rgba(255,255,255,0.55)";
+                ctx.beginPath(); ctx.ellipse(-30, -2, 13, 24, 0.4, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(30, -2, 13, 24, -0.4, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = "#5b3418"; roundedRect(-14, -14, 28, 28, 6); ctx.fill();
+                ctx.restore();
+            }
+
+            drawOneAxe(g.leftPivotX, g.pivotY, g.leftAngle, 1);
+            drawOneAxe(g.rightPivotX, g.pivotY, g.rightAngle, -1);
+
+            ctx.save();
+            ctx.fillStyle = "rgba(0,0,0,0.35)";
+            ctx.font = "bold 18px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("שער הגרזנים", roadLeft + roadWidth / 2, axe.y + 92);
+            ctx.restore();
+        }
+
+        function drawCoin(coin) {
+            ctx.save(); ctx.translate(coin.x, coin.y); ctx.fillStyle = '#FFD700'; ctx.shadowBlur = 20; ctx.shadowColor = "gold";
+            ctx.beginPath(); ctx.arc(0, 0, coin.radius, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#B8860B'; ctx.lineWidth = 4; ctx.stroke();
+            ctx.fillStyle = '#000'; ctx.shadowBlur = 0; ctx.font = 'bold 20px Arial';
+            ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("$", 0, 0); ctx.restore();
+        }
+
+        function handleHit() {
+            if (player.invincibleTimer <= 0) {
+                player.lives--; player.invincibleTimer = 100;
+                if (player.lives <= 0) gameOver = true;
+            }
+        }
+
+        function detectCollision(rect1, rect2) {
+            var r2W = rect2.width || (rect2.radius * 2), r2H = rect2.height || (rect2.radius * 2);
+            var r2X = rect2.x - (rect2.radius || 0), r2Y = rect2.y - (rect2.radius || 0);
+            return rect1.x < r2X + r2W && rect1.x + rect1.width > r2X && rect1.y < r2Y + r2H && rect1.y + rect1.height > r2Y;
+        }
+
+        // --- עדכון לוגיקה ---
+        function update() {
+            if (gameOver || gameWon) return;
+            frames++; hillPhase += 0.03;
+            if (player.invincibleTimer > 0) player.invincibleTimer--;
+
+            var currentLevelIdx = Math.min(4, Math.floor(frames / 1500));
+            roadOffset = (roadOffset + player.speed) % 200;
+            var baseSpeed = 5 + currentLevelIdx;
+
+            if (keys[37] && player.x > roadLeft + 10) player.x -= player.speed;
+            if (keys[39] && player.x + player.width < roadLeft + roadWidth - 10) player.x += player.speed;
+
+            if (!boss.active) {
+                // שער הגרזנים הוא מכשול מיוחד: ברגע שהוא נכנס למסך אין מכשולים אחרים.
+                if (currentLevelIdx >= 1 && frames % 420 === 0 && axes.length === 0) spawnAxeGate(baseSpeed, currentLevelIdx);
+                var canSpawnRegularHazards = axes.length === 0;
+
+                if (canSpawnRegularHazards) {
+                    if (frames % 180 === 0) obstacles.push({ x: roadLeft + Math.random() * (roadWidth - 80), y: -100, width: 60 + Math.random()*40, height: 50, speed: baseSpeed });
+                    if (frames % 220 === 0) competitors.push({ x: roadLeft + Math.random() * (roadWidth - 70), y: -150, width: 55, height: 100, color1: 'hsl(' + Math.floor(Math.random()*360) + ', 80%, 56%)', color2: '#161616', speed: Math.max(2, baseSpeed - 2 + Math.random()*3) });
+                    if (frames % 500 === 0) {
+                        crosswalks.push({y: -150, speed: baseSpeed});
+                        var crossFromLeft = Math.random() > 0.5;
+                        ninjas.push({ x: crossFromLeft ? roadLeft - 50 : roadLeft + roadWidth + 10, y: -130, width: 45, height: 40, speedY: baseSpeed, speedX: crossFromLeft ? 3 : -3 });
+                    }
+                    if (frames % 150 === 0) ninjas.push({ x: (Math.random() > 0.5) ? roadLeft - 80 - Math.random()*30 : roadLeft + roadWidth + 30 + Math.random()*30, y: -100, width: 45, height: 40, speedY: baseSpeed + (Math.random() > 0.5 ? 1 : -1), speedX: 0 });
+                }
+
+                if (frames % 30 === 0) sceneries.push({ x: (Math.random() > 0.5) ? Math.random() * (roadLeft - 80) : roadLeft + roadWidth + 20 + Math.random()*(canvas.width - roadLeft - roadWidth - 100), y: -150, speed: baseSpeed, id: frames, isDune: Math.random() > 0.7 });
+                if (frames % 850 === 120) paradeCarts.push({ x: (Math.random() > 0.5) ? 22 : roadLeft + roadWidth + 28, y: -110, speed: Math.max(3, baseSpeed - 1), side: (Math.random() > 0.5) ? "left" : "right", waveOffset: Math.random() * Math.PI * 2 });
+                if (frames % 100 === 0) coins.push({ x: roadLeft + 30 + Math.random() * (roadWidth - 60), y: -50, radius: 18, speed: baseSpeed });
+            }
+
+            if (currentLevelIdx === 4 && frames % 1500 > 150 && !boss.active) boss.active = true;
+
+            if (boss.active) {
+                boss.x += 5 * boss.direction;
+                if (boss.x <= roadLeft || boss.x + boss.width >= roadLeft + roadWidth) boss.direction *= -1;
+                if (frames % 45 === 0) obstacles.push({ x: boss.x + boss.width / 2 - 30, y: boss.y + boss.height, width: 60, height: 50, speed: 8 });
+                boss.hp -= 0.03; if (boss.hp <= 0) gameWon = true;
+            }
+
+            function updateArr(arr, checkHit, moveX) {
+                for (var i = 0; i < arr.length; i++) {
+                    arr[i].y += arr[i].speed || arr[i].speedY;
+                    if (moveX) arr[i].x += arr[i].speedX;
+                    if (checkHit && detectCollision(player, arr[i])) handleHit();
+                    if (arr[i].y > canvas.height + 200 || arr[i].x < -200 || arr[i].x > canvas.width + 200) { arr.splice(i, 1); i--; }
+                }
+            }
+
+            updateArr(obstacles, true, false); updateArr(competitors, true, false);
+            updateArr(sceneries, false, false); updateArr(crosswalks, false, false); updateArr(ninjas, true, true); updateArr(paradeCarts, false, false);
+            
+            for (var k = 0; k < axes.length; k++) {
+                axes[k].y += axes[k].speed; axes[k].phase += axes[k].phaseSpeed;
+                var g = getAxeGeometry(axes[k]);
+                var leftPolys = getAxeBladePolygons(g.leftPivotX, g.pivotY, g.leftAngle, g.length);
+                var rightPolys = getAxeBladePolygons(g.rightPivotX, g.pivotY, g.rightAngle, g.length);
+                var carForAxeHit = {
+                    x: player.x + 8,
+                    y: player.y + 10,
+                    width: player.width - 16,
+                    height: player.height - 20
+                };
+                var axeHit = false;
+                for (var lp = 0; lp < leftPolys.length; lp++) {
+                    if (polygonIntersectsRect(leftPolys[lp], carForAxeHit)) axeHit = true;
+                }
+                for (var rp = 0; rp < rightPolys.length; rp++) {
+                    if (polygonIntersectsRect(rightPolys[rp], carForAxeHit)) axeHit = true;
+                }
+                if (axeHit) handleHit();
+                if (axes[k].y > canvas.height + 170) { axes.splice(k, 1); k--; }
+            }
+
+            for (var m = 0; m < coins.length; m++) {
+                coins[m].y += coins[m].speed;
+                if (detectCollision(player, coins[m])) {
+                    coinsCount++; coins.splice(m, 1); m--;
+                    if (coinsCount === 13 && !player.hasNewCar) { player.hasNewCar = true; player.color1 = '#ffd700'; player.color2 = '#ff8c00'; player.speed = 10; }
+                } else if (coins[m].y > canvas.height) { coins.splice(m, 1); m--; }
+            }
+        }
+
+        // --- ציור המסך ---
+        function draw() {
+            var currentLevelIdx = Math.min(4, Math.floor(frames / 1500));
+            var lvl = levels[currentLevelIdx];
+            
+            var bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            bgGrad.addColorStop(0, lvl.bg);
+            bgGrad.addColorStop(1, lvl.bg2 || lvl.bg);
+            ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawSoftGlow(roadLeft + roadWidth / 2, canvas.height * 0.18, 280, lvl.glow || "rgba(255,255,255,0.12)");
+
+            var edgeGrad = ctx.createLinearGradient(0, 0, canvas.width, 0);
+            edgeGrad.addColorStop(0, "rgba(0,0,0,0.25)"); edgeGrad.addColorStop(0.5, lvl.edge); edgeGrad.addColorStop(1, "rgba(0,0,0,0.25)");
+            ctx.fillStyle = edgeGrad; ctx.fillRect(roadLeft - 34, 0, 34, canvas.height); ctx.fillRect(roadLeft + roadWidth, 0, 34, canvas.height);
+            ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.fillRect(roadLeft - 5, 0, 5, canvas.height); ctx.fillRect(roadLeft + roadWidth, 0, 5, canvas.height);
+
+            var roadGrad = ctx.createLinearGradient(roadLeft, 0, roadLeft + roadWidth, 0);
+            roadGrad.addColorStop(0, "#17191f"); roadGrad.addColorStop(0.18, lvl.road); roadGrad.addColorStop(0.5, "#3b3e47"); roadGrad.addColorStop(0.82, lvl.road); roadGrad.addColorStop(1, "#17191f");
+            ctx.fillStyle = roadGrad; ctx.fillRect(roadLeft, 0, roadWidth, canvas.height);
+
+            for(var h = 0; h < 3; h++) {
+                var hillY = ((frames * 3) + (h * 400)) % 1200 - 300;
+                var gradient = ctx.createLinearGradient(0, hillY, 0, hillY + 200);
+                gradient.addColorStop(0, "rgba(0,0,0,0.2)"); gradient.addColorStop(0.5, "rgba(255,255,255,0.05)"); gradient.addColorStop(1, "rgba(0,0,0,0)");
+                ctx.fillStyle = gradient; ctx.fillRect(roadLeft, hillY, roadWidth, 200);
+            }
+
+            ctx.fillStyle = "rgba(255,255,255,0.6)";
+            for(var i = -100; i < canvas.height; i += 120) {
+                ctx.fillRect(roadLeft + roadWidth / 3 - 5, i + (roadOffset % 120), 10, 60); ctx.fillRect(roadLeft + (roadWidth * 2) / 3 - 5, i + (roadOffset % 120), 10, 60);
+            }
+
+            for (var s=0; s<sceneries.length; s++) drawScenery(sceneries[s], currentLevelIdx);
+            for (var pc=0; pc<paradeCarts.length; pc++) drawBarbieBenCart(paradeCarts[pc]);
+
+            ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+            for(var cw=0; cw<crosswalks.length; cw++) {
+                var cy = crosswalks[cw].y;
+                if (cy > -100 && cy < canvas.height + 100) { for(var j = roadLeft + 10; j < roadLeft + roadWidth - 10; j += 40) ctx.fillRect(j, cy, 25, 80); }
+            }
+
+            for (var ni=0; ni<ninjas.length; ni++) drawNinjas(ninjas[ni]);
+            for (var c=0; c<competitors.length; c++) drawCar(competitors[c].x, competitors[c].y, competitors[c].width, competitors[c].height, competitors[c].color1, competitors[c].color2, false);
+            for (var o=0; o<obstacles.length; o++) drawObstacle(obstacles[o]);
+            for (var a=0; a<axes.length; a++) drawAxe(axes[a]);
+            for (var ci=0; ci<coins.length; ci++) drawCoin(coins[ci]);
+
+            drawCar(player.x, player.y, player.width, player.height, player.color1, player.color2, player.hasNewCar, true);
+            
+            if (boss.active) {
+                drawCar(boss.x, boss.y, boss.width, boss.height, boss.color1, boss.color2, true);
+                ctx.fillStyle = "#222"; ctx.fillRect(boss.x, boss.y - 25, boss.width, 15);
+                ctx.fillStyle = "#ff0000"; ctx.fillRect(boss.x, boss.y - 25, boss.width * (boss.hp/100), 15);
+                ctx.fillStyle = "white"; ctx.font = "14px Arial"; ctx.fillText("רכב הגמר!", boss.x + boss.width/2, boss.y - 30);
+            }
+
+            var hudGrad = ctx.createLinearGradient(0, 0, canvas.width, 55);
+            hudGrad.addColorStop(0, "rgba(0,0,0,0.82)"); hudGrad.addColorStop(0.5, "rgba(20,30,55,0.82)"); hudGrad.addColorStop(1, "rgba(0,0,0,0.82)");
+            ctx.fillStyle = hudGrad; ctx.fillRect(0, 0, canvas.width, 55);
+            ctx.strokeStyle = "rgba(0,255,204,0.35)"; ctx.beginPath(); ctx.moveTo(0,55); ctx.lineTo(canvas.width,55); ctx.stroke();
+            ctx.fillStyle = "#00ffcc"; ctx.font = "bold 24px Arial"; ctx.textAlign = "left"; ctx.fillText("💰 מטבעות: " + coinsCount, 20, 35);
+            ctx.textAlign = "center"; ctx.fillStyle = "#fff"; ctx.fillText("🌍 מיקום: " + lvl.name, canvas.width / 2, 35);
+            ctx.fillStyle = "#ff3333"; ctx.textAlign = "right";
+            var safeLives = Math.max(0, player.lives); var heartsStr = ""; for(var hl=0; hl<safeLives; hl++) heartsStr += "❤️";
+            ctx.fillText("חיים: " + heartsStr, canvas.width - 20, 35);
+
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.9)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "#ff4c4c"; ctx.font = "bold 70px Arial"; ctx.textAlign = "center"; ctx.fillText("פסילה כואבת!", canvas.width / 2, canvas.height / 2 - 30);
+                ctx.fillStyle = "white"; ctx.font = "24px Arial"; ctx.fillText("לחץ על כפתור 'התחל' כדי לנסות שוב", canvas.width / 2, canvas.height / 2 + 30);
+                document.getElementById('startOverlay').style.display = 'flex'; // החזרת כפתור התחל
+                document.getElementById('startBtn').innerText = "שחק שוב 🔄";
+                isGameRunning = false;
+            }
+
+            if (gameWon) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.9)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "#FFD700"; ctx.font = "bold 70px Arial"; ctx.textAlign = "center"; ctx.fillText("ניצחון הירואי!", canvas.width / 2, canvas.height / 2 - 30);
+                ctx.fillStyle = "white"; ctx.font = "24px Arial"; ctx.fillText("הבסת את מכונית הגמר!", canvas.width / 2, canvas.height / 2 + 30);
+                document.getElementById('startOverlay').style.display = 'flex';
+                document.getElementById('startBtn').innerText = "שחק שוב 🏆";
+                isGameRunning = false;
+            }
+        }
+
+        function gameLoop() {
+            if (isGameRunning) {
+                update();
+                draw();
+                animFrameId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // --- מאזינים לכפתורים ---
+        document.getElementById('startBtn').addEventListener('click', function() {
+            document.getElementById('startOverlay').style.display = 'none';
+            resetGame();
+            if (!isGameRunning) {
+                isGameRunning = true;
+                cancelAnimationFrame(animFrameId);
+                gameLoop();
+            }
+        });
+
+        document.getElementById('fullscreenBtn').addEventListener('click', function() {
+            if (!document.fullscreenElement) {
+                if (wrapper.requestFullscreen) {
+                    wrapper.requestFullscreen();
+                } else if (wrapper.webkitRequestFullscreen) { /* Safari */
+                    wrapper.webkitRequestFullscreen();
+                } else if (wrapper.msRequestFullscreen) { /* IE11 */
+                    wrapper.msRequestFullscreen();
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) { /* Safari */
+                    document.webkitExitFullscreen();
+                } else if (document.msExitFullscreen) { /* IE11 */
+                    document.msExitFullscreen();
+                }
+            }
+        });
+        
+        // ציור התחלתי ריק לפני הלחיצה על התחל
+        resetGame(); draw(); 
+    </script>
+</body>
+</html>
