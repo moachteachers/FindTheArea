@@ -8,3 +8,15 @@ Otherwise it will send 'C' in the same timing.
 The code on the Microbit will respond according to the codeForMicrobit.hex file (stormy response to S, calm response to C)
 
 link: https://moachteachers.github.io/FindTheArea/HippocampusElectrophysiology/
+
+
+embed:
+
+<iframe
+src="https://moachteachers.github.io/FindTheArea/HippocampusElectrophysiology/index.html"
+width="100%"
+height="700"
+style="border:0;"
+allow="microphone; serial; usb; fullscreen"
+allowfullscreen>
+</iframe>
