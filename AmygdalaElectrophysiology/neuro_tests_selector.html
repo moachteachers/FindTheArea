@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>בחירת בדיקות</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(115, 196, 255, 0.28), transparent 28%),
+        radial-gradient(circle at 80% 20%, rgba(167, 139, 250, 0.22), transparent 25%),
+        radial-gradient(circle at 50% 85%, rgba(52, 211, 153, 0.16), transparent 35%),
+        linear-gradient(135deg, #07111f, #111827 50%, #0f172a);
+      color: #f8fafc;
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      padding: 18px;
+      overflow-x: hidden;
+    }
+
+    .app {
+      width: min(1100px, 100%);
+      min-height: calc(100vh - 36px);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .top {
+      text-align: center;
+      padding: 22px 14px 10px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.5rem, 4.8vw, 3.1rem);
+      line-height: 1.25;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      text-shadow: 0 3px 18px rgba(0, 0, 0, 0.35);
+    }
+
+    #counter {
+      min-height: 1.6em;
+      margin-top: 10px;
+      font-size: clamp(1.2rem, 3vw, 2rem);
+      font-weight: 800;
+      color: #dbeafe;
+    }
+
+    .grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 14px;
+      align-content: start;
+      padding-bottom: 24px;
+    }
+
+    button.test {
+      min-height: 78px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 22px;
+      padding: 16px 14px;
+      font: inherit;
+      font-size: clamp(1rem, 2.1vw, 1.35rem);
+      font-weight: 800;
+      line-height: 1.25;
+      color: #f8fafc;
+      background: rgba(255, 255, 255, 0.105);
+      box-shadow:
+        0 12px 28px rgba(0, 0, 0, 0.23),
+        inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(10px);
+      cursor: pointer;
+      transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, opacity 160ms ease, border-color 160ms ease;
+      touch-action: manipulation;
+    }
+
+    button.test:hover:not(:disabled):not(.selected) {
+      transform: translateY(-3px);
+      background: rgba(255, 255, 255, 0.16);
+      box-shadow:
+        0 18px 34px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.23);
+    }
+
+    button.test:active:not(:disabled) {
+      transform: translateY(2px) scale(0.99);
+    }
+
+    button.test.selected {
+      transform: translateY(5px) scale(0.985);
+      background: linear-gradient(145deg, rgba(34, 197, 94, 0.86), rgba(14, 165, 233, 0.76));
+      border-color: rgba(255, 255, 255, 0.68);
+      box-shadow:
+        0 5px 12px rgba(0, 0, 0, 0.36),
+        inset 0 5px 14px rgba(0, 0, 0, 0.24),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.36);
+      color: white;
+      cursor: default;
+    }
+
+    button.test:disabled:not(.selected) {
+      opacity: 0.28;
+      cursor: not-allowed;
+      transform: none;
+      filter: grayscale(0.7);
+      box-shadow: none;
+    }
+
+    @media (max-width: 560px) {
+      body {
+        padding: 12px;
+      }
+
+      .app {
+        min-height: calc(100vh - 24px);
+        gap: 12px;
+      }
+
+      .top {
+        padding-top: 14px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      button.test {
+        min-height: 62px;
+        border-radius: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="top">
+      <h1>בחרו את חמשת הבדיקות שתבצעו</h1>
+      <div id="counter" aria-live="polite"></div>
+    </section>
+
+    <section class="grid" id="tests"></section>
+  </main>
+
+  <script>
+    const tests = [
+      "חדות ראייה",
+      "מעקב עם העיניים אחר תנועות אצבע",
+      "זיהוי צבעים",
+      "בדיקת שמיעה",
+      "זיהוי מיקום של קול במרחב",
+      "זיהוי מיקום של מגע בכפות הידיים",
+      "זיהוי סוג של מגע (רך/קשה) בכפות הידיים",
+      "הבאת אצבע לאף",
+      "הליכה עקב בצד אגודל",
+      "עמידה על רגל אחת",
+      "קואורדינציה",
+      "כוח שרירי הידיים",
+      "תנועות עדינות עם האצבעות",
+      "התמצאות במה הזמן ומה המקום",
+      "מבחן זיכרון של מילים או ספרות",
+      "למידה של תנועה חדשה",
+      "ביצוע תרגילי חשבון פשוטים",
+      "ספירה לאחור מ-100 בקפיצות של 7",
+      "קריאה",
+      "העתקה של ציור",
+      "אמירה של משפט",
+      "מתן שם לחפצים",
+      "זיהוי רגשות לפי הבעת פנים",
+      "קשב למרות הסחות דעת"
+    ];
+
+    const maxSelections = 5;
+    let selectedCount = 0;
+
+    const testsContainer = document.getElementById("tests");
+    const counter = document.getElementById("counter");
+
+    function updateCounter() {
+      counter.textContent = selectedCount === 0 ? "" : `${selectedCount} מתוך ${maxSelections}`;
+    }
+
+    function lockAllButtons() {
+      document.querySelectorAll("button.test").forEach(button => {
+        button.disabled = true;
+      });
+    }
+
+    tests.forEach(test => {
+      const button = document.createElement("button");
+      button.className = "test";
+      button.type = "button";
+      button.textContent = test;
+      button.addEventListener("click", () => {
+        if (button.classList.contains("selected") || selectedCount >= maxSelections) return;
+
+        selectedCount += 1;
+        button.classList.add("selected");
+        updateCounter();
+
+        if (selectedCount === maxSelections) {
+          lockAllButtons();
+        }
+      });
+      testsContainer.appendChild(button);
+    });
+  </script>
+</body>
+</html>
