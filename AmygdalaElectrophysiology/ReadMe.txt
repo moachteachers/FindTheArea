@@ -9,7 +9,7 @@ link: https://moachteachers.github.io/FindTheArea/AmygdalaElectrophysiology/inde
 embed:
 
 <iframe
-src="https://moachteachers.github.io/FindTheArea/CerebellumElectrophysiology/index.html"
+src="https://moachteachers.github.io/FindTheArea/AmygdalaElectrophysiology/index.html"
 width="100%"
 height="700"
 style="border:0;"
