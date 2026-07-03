@@ -89,34 +89,42 @@
     </style>
 </head>
 <body>
-
     <h1>ניסוי אלקטרופיזיולגי - אזור מס' 2</h1>
+
     <button id="connectBtn">1. התחבר למיקרוביט (USB)</button>
-    <button id="startBtn" disabled>2. התחל קריאה</button>
+    <button id="startBtn" disabled>2. התחל כיול ומדידה</button>
     
     <div id="wordDisplay">...</div>
     <div id="status">ממתין לחיבור...</div>
+    <div id="baselineDisplay"></div>
 
     <script>
         let port;
         let writer;
         let reader;
+        
         let isReadingData = false;
-        let previousLightLevel = null;
-        const threshold = 5; // סף רגישות כדי למנוע קפיצות קטנות ורעש מהחיישן
+        let isCalibrating = false;
+        
+        let baselineLight = 0;
+        let calibrationReadings = [];
+        let lightHistory = []; // שומר את היסטוריית הקריאות ב-2 השניות האחרונות
+        
+        // פרמטרים שניתן לכוונן
+        const SLIGHT_THRESHOLD = 3;       // כמה אור מעל הבסיס ייחשב כעלייה קלה (C)
+        const SIGNIFICANT_THRESHOLD = 15; // כמה אור מעל המינימום ב-2 השניות האחרונות ייחשב לקפיצה (S)
 
         const connectBtn = document.getElementById('connectBtn');
         const startBtn = document.getElementById('startBtn');
         const wordDisplay = document.getElementById('wordDisplay');
         const statusDiv = document.getElementById('status');
+        const baselineDisplay = document.getElementById('baselineDisplay');
 
-        // פונקציה להתחברות למיקרוביט דרך Web Serial API
         connectBtn.addEventListener('click', async () => {
             try {
                 port = await navigator.serial.requestPort();
                 await port.open({ baudRate: 115200 });
                 
-                // הגדרת ערוץ כתיבה למיקרוביט
                 const textEncoder = new TextEncoderStream();
                 textEncoder.readable.pipeTo(port.writable);
                 writer = textEncoder.writable.getWriter();
@@ -124,16 +132,13 @@
                 statusDiv.innerText = "מחובר למיקרוביט בהצלחה!";
                 startBtn.disabled = false;
                 
-                // התחלת האזנה רציפה לערוץ הקריאה
                 readLoop();
-                
             } catch (error) {
                 console.error('שגיאת התחברות:', error);
-                statusDiv.innerText = "ההתחברות נכשלה. ודא שהמיקרוביט מחובר.";
+                statusDiv.innerText = "ההתחברות נכשלה. ודא שהמיקרוביט מחובר ושאין חלון Console פתוח.";
             }
         });
 
-        // לולאה שקוראת את הנתונים שמגיעים מהמיקרוביט ברצף
         async function readLoop() {
             const textDecoder = new TextDecoderStream();
             port.readable.pipeTo(textDecoder.writable);
@@ -147,7 +152,7 @@
                 
                 buffer += value;
                 let lines = buffer.split('\n');
-                buffer = lines.pop(); // שומר את השורה הלא שלמה בבאפר להמשך
+                buffer = lines.pop(); 
 
                 for (let line of lines) {
                     let cleanLine = line.trim();
@@ -158,50 +163,89 @@
             }
         }
 
-        // פונקציה לשליחת פקודות למיקרוביט
         async function sendCommand(cmd) {
             if (writer) {
-                await writer.write(cmd + '\n');
+                await writer.write(cmd + '\r\n'); // שימוש ב-\r\n תואם יותר למיקרוביט
             }
         }
 
-        // עיבוד רמת האור שהתקבלה
         function processLightLevel(data) {
             const currentLightLevel = parseInt(data);
-            
-            // מוודא שקיבלנו מספר תקין
-            if (!isNaN(currentLightLevel)) {
-                // wordDisplay.innerText = currentLightLevel;
+            if (isNaN(currentLightLevel)) return;
 
-                if (previousLightLevel !== null) {
-                    // בדיקה אם יש עלייה באור מעבר לסף שהגדרנו
-                    if (currentLightLevel > previousLightLevel + threshold) {
-                        sendCommand('S'); // שליחת 'S' למיקרוביט
-                        // statusDiv.innerText = "זוהתה עלייה באור! נשלח S";
-                        
-                        // ניקוי חיווי הסטטוס אחרי 2 שניות
-                        setTimeout(() => {
-                            if (isReadingData) statusDiv.innerText = "קורא נתונים...";
-                        }, 2000);
-                    }
-                }
-                
-                previousLightLevel = currentLightLevel;
+            wordDisplay.innerText = currentLightLevel;
+            const now = Date.now();
+
+            // 1. שלב הכיול (3 שניות ראשונות)
+            if (isCalibrating) {
+                calibrationReadings.push(currentLightLevel);
+                return; 
+            }
+
+            // 2. עדכון חלון הזמן (2 השניות האחרונות)
+            lightHistory.push({ time: now, val: currentLightLevel });
+            // ניקוי נתונים ישנים (מעל 2000 מילישניות)
+            lightHistory = lightHistory.filter(item => now - item.time <= 2000);
+
+            // 3. ניתוח הנתונים בחלון הזמן
+            // מציאת הערך הנמוך ביותר ב-2 השניות האחרונות כדי לזהות קפיצה פתאומית
+            let minInWindow = Math.min(...lightHistory.map(item => item.val));
+            let isSignificantSpike = (currentLightLevel - minInWindow) >= SIGNIFICANT_THRESHOLD;
+
+            // 4. עץ ההחלטות ושליחת הפקודות
+            if (isSignificantSpike) {
+                // נשלח ברצף כל עוד הקפיצה נמצאת בתוך חלון ה-2 שניות
+                sendCommand('S');
+                statusDiv.innerText = "S (קפיצה חדה זוהתה!)";
+                statusDiv.style.color = "red";
+            } 
+            else if (currentLightLevel >= baselineLight + SLIGHT_THRESHOLD) {
+                // אין קפיצה חדה בחלון הזמן, אבל עדיין מואר יותר מרמת הבסיס
+                sendCommand('C');
+                statusDiv.innerText = "C (תאורה מעל הבסיס)";
+                statusDiv.style.color = "orange";
+            } 
+            else {
+                // חזרנו לרמת הבסיס או חשוך יותר
+                statusDiv.innerText = "רמת בסיס (לא שולח כלום)";
+                statusDiv.style.color = "green";
             }
         }
 
-        // הפעלת או עצירת הקריאה (הלוגיקה)
         startBtn.addEventListener('click', () => {
             if (!isReadingData) {
+                // תחילת מדידה וכיול
                 isReadingData = true;
-                previousLightLevel = null; // איפוס הקריאה הקודמת בכל תחילת מדידה
-                startBtn.innerText = "הפסק קריאה...";
-                statusDiv.innerText = "קורא נתונים...";
+                isCalibrating = true;
+                calibrationReadings = [];
+                lightHistory = [];
+                
+                startBtn.innerText = "מפסיק קריאה...";
+                statusDiv.innerText = "מכייל חיישן למשך 3 שניות...";
+                statusDiv.style.color = "blue";
+                baselineDisplay.innerText = "";
+
+                // סיום הכיול אחרי 3000 מילישניות
+                setTimeout(() => {
+                    if (!isReadingData) return; // במידה והמשתמש עצר לפני שהסתיים הכיול
+                    isCalibrating = false;
+                    
+                    // חישוב ממוצע רמת הבסיס
+                    let sum = calibrationReadings.reduce((a, b) => a + b, 0);
+                    baselineLight = Math.round(sum / calibrationReadings.length) || 0;
+                    
+                    baselineDisplay.innerText = `רמת בסיס כוילה ל: ${baselineLight}`;
+                    statusDiv.innerText = "הכיול הסתיים. מנתח נתונים...";
+                }, 3000);
+
             } else {
+                // עצירת המדידה
                 isReadingData = false;
-                startBtn.innerText = "2. התחל קריאה";
+                startBtn.innerText = "2. התחל כיול ומדידה";
                 statusDiv.innerText = "הקריאה הופסקה.";
+                statusDiv.style.color = "#666";
                 wordDisplay.innerText = "...";
+                baselineDisplay.innerText = "";
             }
         });
 
