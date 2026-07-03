@@ -3,287 +3,125 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - סינון רעשים וריכוך למרחק</title>
+    <title>PLD - כיול מבוסס פרופורציות</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
 
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #111; color: white; margin: 0; padding: 20px; }
-        button { font-size: 18px; padding: 12px 25px; margin: 10px; cursor: pointer; border: none; border-radius: 8px; background-color: #0078D7; color: white; transition: 0.3s; }
-        button:disabled { background-color: #444; cursor: not-allowed; color: #888; }
-        button:hover:not(:disabled) { background-color: #005a9e; }
-        
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; background-color: #111; color: white; margin: 0; padding: 20px; }
+        button { font-size: 18px; padding: 12px 25px; margin: 10px; cursor: pointer; border: none; border-radius: 8px; background-color: #0078D7; color: white; }
         #container { position: relative; margin: 10px auto; width: 800px; height: 450px; border: 2px solid #555; border-radius: 10px; overflow: hidden; background-color: black; }
         video { display: none; }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        
-        #status { font-size: 24px; margin-top: 10px; min-height: 35px; font-weight: bold; }
-        .controls { background-color: #222; padding: 10px; border-radius: 10px; display: inline-block; margin-bottom: 10px; border: 1px solid #444;}
-        
-        #debug-panel { background-color: rgba(0,0,0,0.8); border: 1px solid #444; padding: 15px; border-radius: 10px; display: inline-block; margin-top: 15px; font-family: monospace; text-align: left; direction: ltr; min-width: 340px; }
-        .debug-row { margin: 5px 0; font-size: 15px; display: flex; justify-content: space-between;}
-        .val-good { color: #4CAF50; font-weight: bold;}
-        .val-bad { color: #F44336; font-weight: bold;}
-        .val-warn { color: #FFC107; font-weight: bold;}
+        #status { font-size: 20px; font-weight: bold; margin-top: 10px; }
+        #debug { color: #aaa; font-size: 14px; font-family: monospace; }
     </style>
 </head>
 <body>
 
-    <h1>מעבדת PLD: מערכת לסינון רעשים מרחוק</h1>
-    
-    <div class="controls">
-        <button id="connectBtn">1. התחבר למיקרוביט</button>
-        <button id="startCamBtn">2. הפעל מצלמה (HD)</button>
-    </div>
-
-    <div id="status">ממתין לפעולה...</div>
+    <h1>מעבדת PLD: לוגיקה מבוססת פרופורציות</h1>
+    <button id="connectBtn">1. התחבר למיקרוביט</button>
+    <button id="startCamBtn">2. הפעל מצלמה</button>
+    <div id="status">ממתין...</div>
+    <div id="debug">FaceWidth: 0.00 | Ratio: 0.00</div>
 
     <div id="container">
         <video id="input_video" autoplay playsinline></video>
         <canvas id="output_canvas" width="1280" height="720"></canvas>
     </div>
 
-    <div id="debug-panel">
-        <div style="text-align: center; color: #aaa; margin-bottom: 10px; border-bottom: 1px solid #444; padding-bottom: 5px;">בקרת רעשים ואופטיקה</div>
-        <div class="debug-row"><span>Face Size (> 0.03):</span> <span id="dbg-facesize" style="color: #888;">0.00</span></div>
-        <div class="debug-row"><span>Z-Depth (Smoothed):</span> <span id="dbg-z" style="color: #888;">0.00</span></div>
-        <div class="debug-row"><span>Consecutive Frames:</span> <span id="dbg-frames" style="color: #888;">0 / 2</span></div>
-    </div>
-
     <script>
-        // -- חיבור למיקרוביט --
-        let port, writer;
-        const connectBtn = document.getElementById('connectBtn');
-        const statusDiv = document.getElementById('status');
-
-        connectBtn.addEventListener('click', async () => {
-            try {
-                port = await navigator.serial.requestPort();
-                await port.open({ baudRate: 115200 });
-                const textEncoder = new TextEncoderStream();
-                textEncoder.readable.pipeTo(port.writable);
-                writer = textEncoder.writable.getWriter();
-                statusDiv.innerText = "מחובר למיקרוביט בהצלחה!";
-                statusDiv.style.color = "#4CAF50";
-            } catch (error) {
-                statusDiv.innerText = "שגיאת התחברות למיקרוביט.";
-                statusDiv.style.color = "#F44336";
-            }
-        });
-
+        // --- תקשורת מיקרוביט ---
+        let writer;
         async function sendCommand(cmd) { if (writer) await writer.write(cmd + '\r\n'); }
+        document.getElementById('connectBtn').onclick = async () => {
+            const port = await navigator.serial.requestPort();
+            await port.open({ baudRate: 115200 });
+            writer = new TextEncoderStream().readable.pipeTo(port.writable) && new TextEncoderStream().writable.getWriter();
+            document.getElementById('status').innerText = "מחובר!";
+        };
 
-        // -- פרמטרים חדשים - סינון רעשים --
-        const SEND_COOLDOWN = 400; 
-        
-        // כמה פריימים רצופים המערכת צריכה לזהות תנועה כדי להשתכנע שזה לא רעש מצלמה
-        const REQUIRED_CONSECUTIVE_FRAMES = 2; 
-        
-        const EXPRESSION_RATIO = 0.06; 
-        // סף תחתון מוחלט - מונע מהרגישות לרדת לרמה של פיקסל בודד כשהמשתמש רחוק
-        const MIN_EXPRESSION_THRESHOLD = 0.005; 
-
-        const TOUCH_MULTIPLIER = 1.3; 
-        const MAX_HAND_FACE_RATIO = 2.2; // הוגדל מעט כדי לספוג עיוותי עדשה ממרחק
-        const MAX_Z_DEPTH_TOLERANCE = 0.50; 
-
-        // משתני מערכת סינון
-        let consecutiveTriggers = 0;
-        let smoothedZDepth = null; // ישמור את הממוצע הנע של העומק
-        
-        let lastMouthDist = null, lastLeftEyeDist = null, lastRightEyeDist = null;
-        let lastSendTime = 0;
-
-        // -- אלמנטים דיבאג --
-        const dbgFaceSize = document.getElementById('dbg-facesize');
-        const dbgZ = document.getElementById('dbg-z');
-        const dbgFrames = document.getElementById('dbg-frames');
-
+        // --- לוגיקת MediaPipe ---
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
-        const startCamBtn = document.getElementById('startCamBtn');
+        const debug = document.getElementById('debug');
+        
+        let lastMouthDist = null;
+        let lastLeftEyeDist = null;
+        let lastRightEyeDist = null;
 
-        const holistic = new Holistic({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
-        }});
-
-        holistic.setOptions({
-            modelComplexity: 1, 
-            smoothLandmarks: true, 
-            enableSegmentation: false,
-            smoothSegmentation: false, 
-            refineFaceLandmarks: true,
-            minDetectionConfidence: 0.5, 
-            minTrackingConfidence: 0.5
-        });
-
+        const holistic = new Holistic({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`});
         holistic.onResults(onResults);
 
-        startCamBtn.addEventListener('click', () => {
-            startCamBtn.disabled = true;
-            statusDiv.innerText = "טוען מצלמת HD...";
-            statusDiv.style.color = "white";
-            const camera = new Camera(videoElement, {
-                onFrame: async () => { await holistic.send({image: videoElement}); },
-                width: 1280, height: 720
-            });
-            camera.start();
-        });
+        document.getElementById('startCamBtn').onclick = () => {
+            new Camera(videoElement, { onFrame: () => holistic.send({image: videoElement}), width: 1280, height: 720 }).start();
+        };
 
-        function getDistance(lm1, lm2) {
-            if (!lm1 || !lm2) return 0;
-            return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
-        }
-
-        function getCenter(landmarks) {
-            if (!landmarks || landmarks.length === 0) return null;
-            let sumX = 0, sumY = 0;
-            landmarks.forEach(lm => { sumX += lm.x; sumY += lm.y; });
-            return { x: sumX / landmarks.length, y: sumY / landmarks.length };
-        }
-
-        function checkAdvanced3DTouch(handLandmarks, faceCenter, faceWidth, poseLandmarks) {
-            if (!handLandmarks || !faceCenter || !faceWidth || !poseLandmarks) return false;
-
-            let isOverlapping = false;
-            for (let i of [8, 12, 16, 20]) { 
-                if (getDistance(handLandmarks[i], faceCenter) < faceWidth * TOUCH_MULTIPLIER) {
-                    isOverlapping = true; break;
-                }
-            }
-            if (!isOverlapping) return false;
-
-            let handSize = getDistance(handLandmarks[0], handLandmarks[9]);
-            let ratio = handSize / faceWidth;
-            if (ratio > MAX_HAND_FACE_RATIO) return false; 
-
-            let shoulderWidth = getDistance(poseLandmarks[11], poseLandmarks[12]);
-            if (shoulderWidth < 0.05) return false; 
-            
-            let noseZ = poseLandmarks[0].z;
-            let leftWristZ = poseLandmarks[15].z;
-            let rightWristZ = poseLandmarks[16].z;
-            
-            let rawZDiff = Math.min(Math.abs(noseZ - leftWristZ), Math.abs(noseZ - rightWristZ));
-            let rawNormalizedZ = rawZDiff / shoulderWidth;
-            
-            // יישום ממוצע נע (EMA) לריכוך קפיצות העומק ממרחק
-            if (smoothedZDepth === null) {
-                smoothedZDepth = rawNormalizedZ;
-            } else {
-                // 30% נתון חדש, 70% היסטוריה (מחליק רעשים באופן משמעותי)
-                smoothedZDepth = (0.3 * rawNormalizedZ) + (0.7 * smoothedZDepth);
-            }
-
-            dbgZ.innerText = `${smoothedZDepth.toFixed(2)} (Max: ${MAX_Z_DEPTH_TOLERANCE.toFixed(2)})`;
-
-            if (smoothedZDepth > MAX_Z_DEPTH_TOLERANCE) {
-                dbgZ.className = "val-bad";
-                return false; 
-            }
-            
-            dbgZ.className = "val-good";
-            return true; 
-        }
-
-        function drawPLDPoints(landmarks, color = "white", size = 3) {
-            if (!landmarks) return;
-            canvasCtx.fillStyle = color;
-            landmarks.forEach(lm => {
-                canvasCtx.beginPath();
-                canvasCtx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, size, 0, 2 * Math.PI);
-                canvasCtx.fill();
-            });
-        }
+        function getDistance(lm1, lm2) { return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y); }
 
         function onResults(results) {
             canvasCtx.fillStyle = 'black';
-            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
-
-            drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); 
-            drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2);
-            drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3);
-            drawPLDPoints(results.rightHandLandmarks, "#FFFF00", 3);
-
-            let rawTrigger = false;
-            let currentEventText = "";
+            canvasCtx.fillRect(0, 0, 1280, 720);
+            
+            // ציור נקודות
+            [results.poseLandmarks, results.faceLandmarks, results.leftHandLandmarks, results.rightHandLandmarks].forEach(lms => {
+                if(lms) lms.forEach(lm => {
+                    canvasCtx.fillStyle = "white";
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(lm.x * 1280, lm.y * 720, 2, 0, Math.PI*2);
+                    canvasCtx.fill();
+                });
+            });
 
             if (results.faceLandmarks && results.poseLandmarks) {
+                // 1. קביעת קנה המידה (רוחב פנים מנורמל)
                 const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
-                
-                dbgFaceSize.innerText = faceWidth.toFixed(3);
-                if (faceWidth < 0.03) {
-                    dbgFaceSize.className = "val-warn";
-                } else {
-                    dbgFaceSize.className = "val-good";
-                }
+                if (faceWidth < 0.02) return; // הגנה - פנים קטנות מדי לא אמינות
 
-                // הגדרת סף עם הגנת מינימום מוחלטת
-                const dynamicExpressionThreshold = Math.max(faceWidth * EXPRESSION_RATIO, MIN_EXPRESSION_THRESHOLD);
-
+                // 2. חישוב תנועת הבעות יחסי לרוחב הפנים
                 const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                 const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
-                const rightEyeDist = getDistance(results.faceLandmarks[386], results.faceLandmarks[374]);
-
-                // 1. בדיקת הבעות פנים
-                if (lastMouthDist !== null && faceWidth > 0.03) { 
-                    if (Math.abs(mouthDist - lastMouthDist) > dynamicExpressionThreshold) {
-                        rawTrigger = true; currentEventText = "תנועת פה!";
-                    }
-                    else if (Math.abs(leftEyeDist - lastLeftEyeDist) > dynamicExpressionThreshold || 
-                             Math.abs(rightEyeDist - lastRightEyeDist) > dynamicExpressionThreshold) {
-                        rawTrigger = true; currentEventText = "תנועת עיניים!";
-                    }
-                }
-
-                lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist; lastRightEyeDist = rightEyeDist;
-
-                // 2. בדיקת מגע מרוכך
-                if (!rawTrigger && faceWidth > 0.03) { 
-                    let currentFaceCenter = getCenter(results.faceLandmarks);
-                    let touchLeft = checkAdvanced3DTouch(results.leftHandLandmarks, currentFaceCenter, faceWidth, results.poseLandmarks);
-                    let touchRight = checkAdvanced3DTouch(results.rightHandLandmarks, currentFaceCenter, faceWidth, results.poseLandmarks);
-                    
-                    if (touchLeft || touchRight) {
-                        rawTrigger = true; currentEventText = "מגע תלת-ממדי!";
-                    }
-                } else if (!results.leftHandLandmarks && !results.rightHandLandmarks) {
-                    smoothedZDepth = null; // איפוס הממוצע כשאין ידיים בפריים
-                    dbgZ.innerText = "0.00"; dbgZ.className = ""; dbgZ.style.color = "#888";
-                }
-            }
-
-            // --- לוגיקת השהיית הרעש (Debouncing) ---
-            if (rawTrigger) {
-                consecutiveTriggers++;
-            } else {
-                consecutiveTriggers = 0; // איפוס הרצף אם יש פריים אחד שקט
-            }
-
-            // תצוגת בקרת הרצף בדיבאג
-            dbgFrames.innerText = `${consecutiveTriggers} / ${REQUIRED_CONSECUTIVE_FRAMES}`;
-            if (consecutiveTriggers >= REQUIRED_CONSECUTIVE_FRAMES) dbgFrames.className = "val-good";
-            else if (consecutiveTriggers > 0) dbgFrames.className = "val-warn";
-            else { dbgFrames.className = ""; dbgFrames.style.color = "#888"; }
-
-            // --- שליחה בפועל רק אם עברנו את רצף החובה ---
-            const now = Date.now();
-            if (consecutiveTriggers >= REQUIRED_CONSECUTIVE_FRAMES && (now - lastSendTime > SEND_COOLDOWN)) {
-                sendCommand('S'); 
-                lastSendTime = now;
-                statusDiv.innerText = `זיהוי מאומת: ${currentEventText}`; 
-                statusDiv.style.color = "#4CAF50";
                 
-                // איפוס הרצף כדי לא להפציץ את המיקרוביט מיד שוב
-                consecutiveTriggers = 0; 
-                
-                setTimeout(() => { if (Date.now() - lastSendTime >= SEND_COOLDOWN) { statusDiv.innerText = "עוקב..."; statusDiv.style.color = "white"; } }, 600);
-            } else if (consecutiveTriggers === 0 && (now - lastSendTime > SEND_COOLDOWN)) {
-                if(statusDiv.innerText !== "עוקב..." && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!" && !statusDiv.innerText.includes("טוען")) {
-                    statusDiv.innerText = "עוקב..."; statusDiv.style.color = "white";
+                // ה-Threshold הוא 5% מרוחב הפנים. זה נשאר קבוע יחסית לעצמו!
+                const threshold = faceWidth * 0.05; 
+
+                if (lastMouthDist !== null) {
+                    if (Math.abs(mouthDist - lastMouthDist) > threshold || 
+                        Math.abs(leftEyeDist - lastLeftEyeDist) > threshold) {
+                        sendCommand('S');
+                        document.getElementById('status').innerText = "זיהוי הבעה!";
+                    }
                 }
+                lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist;
+
+                // 3. זיהוי מגע יחסי (בלי תלות ב-Z)
+                const faceCenter = {
+                    x: results.faceLandmarks[1].x, // נקודת אף
+                    y: results.faceLandmarks[1].y
+                };
+                
+                let isTouching = false;
+                [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
+                    if(hand) {
+                        // בדיקת 4 קצות אצבעות
+                        [8, 12, 16, 20].forEach(idx => {
+                            // המרחק מחולק ברוחב הפנים - הופך למספר חסר יחידות
+                            const relativeDist = getDistance(hand[idx], faceCenter) / faceWidth;
+                            if (relativeDist < 1.5) { // 1.5 זה קבוע גיאומטרי - לא משתנה עם המרחק
+                                isTouching = true;
+                            }
+                        });
+                    }
+                });
+
+                if (isTouching) {
+                    sendCommand('S');
+                    document.getElementById('status').innerText = "מגע מזוהה!";
+                }
+
+                debug.innerText = `FaceWidth: ${faceWidth.toFixed(3)} | Threshold: ${threshold.toFixed(4)}`;
             }
         }
     </script>
