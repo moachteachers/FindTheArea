@@ -234,7 +234,7 @@
                     let sum = calibrationReadings.reduce((a, b) => a + b, 0);
                     baselineLight = Math.round(sum / calibrationReadings.length) || 0;
                     
-                    baselineDisplay.innerText = `רמת בסיס כוילה ל: ${baselineLight}`;
+                    //baselineDisplay.innerText = `רמת בסיס כוילה ל: ${baselineLight}`;
                     statusDiv.innerText = "הכיול הסתיים. מנתח נתונים...";
                 }, 3000);
 
