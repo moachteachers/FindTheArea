@@ -196,18 +196,21 @@
             if (isSignificantSpike) {
                 // נשלח ברצף כל עוד הקפיצה נמצאת בתוך חלון ה-2 שניות
                 sendCommand('S');
-                statusDiv.innerText = "S (קפיצה חדה זוהתה!)";
+                // את השורה הבאה ניתן להוסיף לקוד חזרה מתיעוד על מנת לראות את הפלט למיקרוביט באופן ויזואלי - רועי
+                // statusDiv.innerText = "S (קפיצה חדה זוהתה!)";
                 statusDiv.style.color = "red";
             } 
             else if (currentLightLevel >= baselineLight + SLIGHT_THRESHOLD) {
                 // אין קפיצה חדה בחלון הזמן, אבל עדיין מואר יותר מרמת הבסיס
                 sendCommand('C');
-                statusDiv.innerText = "C (תאורה מעל הבסיס)";
+                // את השורה הבאה ניתן להוסיף לקוד חזרה מתיעוד על מנת לראות את הפלט למיקרוביט באופן ויזואלי - רועי
+                // statusDiv.innerText = "C (תאורה מעל הבסיס)";
                 statusDiv.style.color = "orange";
             } 
             else {
                 // חזרנו לרמת הבסיס או חשוך יותר
-                statusDiv.innerText = "רמת בסיס (לא שולח כלום)";
+                // את השורה הבאה ניתן להוסיף לקוד חזרה מתיעוד על מנת לראות את הפלט למיקרוביט באופן ויזואלי - רועי
+                //statusDiv.innerText = "רמת בסיס (לא שולח כלום)";
                 statusDiv.style.color = "green";
             }
         }
