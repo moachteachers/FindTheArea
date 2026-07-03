@@ -3,18 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>שליטת אור במיקרוביט</title>
+    <title>גרסת הדגמה - שליטת אור במיקרוביט</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             text-align: center;
             background-color: #f0f8ff;
-            padding: 50px;
+            padding: 40px;
         }
         button {
-            font-size: 20px;
-            padding: 15px 30px;
-            margin: 10px;
+            font-size: 18px;
+            padding: 12px 24px;
+            margin: 10px 5px;
             cursor: pointer;
             border: none;
             border-radius: 10px;
@@ -29,134 +29,243 @@
         button:hover:not(:disabled) {
             background-color: #005a9e;
         }
+        #simBtn {
+            background-color: #28a745;
+        }
+        #simBtn:hover {
+            background-color: #218838;
+        }
+        /* ריבוע תצוגת האות שנשלחה - בולט וגדול למטרת הדגמה */
+        #statusBox {
+            font-size: 80px;
+            font-weight: bold;
+            width: 160px;
+            height: 160px;
+            line-height: 160px;
+            margin: 30px auto;
+            background-color: #6c757d;
+            color: white;
+            border-radius: 20px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        .sending-s {
+            background-color: #28a745 !important; /* ירוק עבור הגברה */
+            transform: scale(1.05);
+        }
+        .sending-c {
+            background-color: #0078D7 !important; /* כחול עבור ללא שינוי */
+        }
         #lightDisplay {
-            font-size: 60px;
+            font-size: 32px;
             font-weight: bold;
             color: #333;
-            margin: 40px 0;
-            min-height: 80px;
+            margin: 20px 0;
             direction: ltr;
         }
         #status {
             font-size: 18px;
             color: #666;
-            margin-top: 20px;
+            margin-top: 15px;
         }
-        .signal {
-            font-size: 24px;
-            font-weight: bold;
-            color: #d9534f;
+        /* עיצוב עבור אזור הסימולציה */
+        #simulatorContainer {
+            margin: 30px auto;
+            padding: 20px;
+            background: #ffffff;
+            border-radius: 15px;
+            max-width: 400px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+            display: none; /* יופיע רק בלחיצה על כפתור הסימולציה */
+        }
+        input[type=range] {
+            width: 80%;
+            margin: 15px 0;
         }
     </style>
 </head>
 <body>
 
-    <h1>קריאת חיישן אור מהמיקרוביט</h1>
-    <button id="connectBtn">1. התחבר למיקרוביט (USB)</button>
+    <h1>מעבד אותות אור - גרסת הדגמה</h1>
+    
+    <div>
+        <button id="connectBtn">1. התחבר למיקרוביט (USB)</button>
+        <button id="simBtn">מצב הדמיה (ללא מיקרוביט)</button>
+    </div>
+    
     <button id="startBtn" disabled>2. התחל לעבד נתונים</button>
     
-    <div id="lightDisplay">...</div>
-    <div id="status">ממתין לחיבור... <br><span id="signalSent" class="signal"></span></div>
+    <div id="lightDisplay">רמת אור נוכחית: ---</div>
+    
+    <div id="statusBox">?</div>
+    
+    <div id="status">ממתין לבחירת מצב עבודה...</div>
+
+    <div id="simulatorContainer">
+        <h3>סימולטור אור ידני</h3>
+        <p>הזז את הסליידר כדי לדמות שינוי ברמת האור של החיישן:</p>
+        <input type="range" id="lightSlider" min="0" max="255" value="100">
+        <span id="sliderVal" style="font-weight:bold;">100</span>
+    </div>
 
     <script>
         let port;
         let writer;
         let reader;
         let isProcessing = false;
+        let isSimulationMode = false;
         let previousLight = null;
         let readBuffer = '';
+        let simInterval = null;
 
         const connectBtn = document.getElementById('connectBtn');
+        const simBtn = document.getElementById('simBtn');
         const startBtn = document.getElementById('startBtn');
         const lightDisplay = document.getElementById('lightDisplay');
         const statusDiv = document.getElementById('status');
-        const signalSent = document.getElementById('signalSent');
+        const statusBox = document.getElementById('statusBox');
+        const simulatorContainer = document.getElementById('simulatorContainer');
+        const lightSlider = document.getElementById('lightSlider');
+        const sliderVal = document.getElementById('sliderVal');
 
-        // פונקציה להתחברות למיקרוביט (קריאה וכתיבה)
+        // חיבור למיקרוביט אמיתי
         connectBtn.addEventListener('click', async () => {
+            // כיבוי מצב סימולציה אם היה פעיל
+            disableSimulation();
+            
             try {
                 port = await navigator.serial.requestPort();
                 await port.open({ baudRate: 115200 });
                 
-                // הגדרת ערוץ כתיבה (לשלוח C ו-S)
                 const textEncoder = new TextEncoderStream();
                 textEncoder.readable.pipeTo(port.writable);
                 writer = textEncoder.writable.getWriter();
 
-                // הגדרת ערוץ קריאה (לקבל את רמת האור)
                 const textDecoder = new TextDecoderStream();
                 port.readable.pipeTo(textDecoder.writable);
-                reader = textDecoder.readable.getReader();
+                reader = textDecoder.writable.getReader();
                 
-                statusDiv.innerHTML = "מחובר למיקרוביט בהצלחה! <br><span id='signalSent' class='signal'></span>";
+                statusDiv.innerText = "מחובר למיקרוביט בהצלחה דרך כבל USB!";
                 startBtn.disabled = false;
+                simBtn.disabled = true;
             } catch (error) {
-                console.error('שגיאת התחברות:', error);
-                statusDiv.innerHTML = "ההתחברות נכשלה. ודא שהמיקרוביט מחובר.";
+                console.error(error);
+                statusDiv.innerText = "ההתחברות נכשלה. ודא שהמיקרוביט מחובר כראוי.";
             }
         });
 
-        // פונקציה לשליחת פקודות
-        async function sendCommand(cmd) {
-            if (writer) {
-                await writer.write(cmd + '\n');
-                document.getElementById('signalSent').innerText = "נשלח: " + cmd;
+        // הפעלת מצב הדמיה (סימולטור למצגת או בדיקות ללא חומרה)
+        simBtn.addEventListener('click', () => {
+            isSimulationMode = true;
+            simulatorContainer.style.display = "block";
+            statusDiv.innerText = "מצב הדמיה פעיל. ניתן להשתמש בסליידר כדי לשנות את האור.";
+            startBtn.disabled = false;
+            connectBtn.disabled = true;
+            simBtn.disabled = true;
+        });
+
+        function disableSimulation() {
+            isSimulationMode = false;
+            simulatorContainer.style.display = "none";
+            if (simInterval) clearInterval(simInterval);
+        }
+
+        // עדכון ערך הסליידר המוצג על המסך
+        lightSlider.addEventListener('input', () => {
+            sliderVal.innerText = lightSlider.value;
+        });
+
+        // פונקציית עיבוד הנתונים המרכזית (משותפת לחומרה ולסימולטור)
+        function processLightReading(currentLight) {
+            lightDisplay.innerText = "רמת אור נוכחית: " + currentLight;
+
+            if (previousLight !== null) {
+                let diff = currentLight - previousLight;
+
+                // תנאי 1: אם יש הגברה של האור (עלייה של יותר מ-5 יחידות למניעת רגישות יתר)
+                if (diff > 5) {
+                    sendSignal('S');
+                } 
+                // תנאי 2: אין שינוי מהותי באור (או שיש ירידה ברמת האור)
+                else {
+                    sendSignal('C');
+                }
+            }
+            previousLight = currentLight;
+        }
+
+        // פונקציה לשליחת האות ועדכון אינדיקטור התצוגה הגדול של ההדגמה
+        async function sendSignal(signal) {
+            // 1. עדכון הממשק הוויזואלי בצורה ברורה מאוד
+            statusBox.innerText = signal;
+            if (signal === 'S') {
+                statusBox.className = 'sending-s';
+                statusDiv.innerHTML = "<strong>נשלח אות: S</strong> (זוהתה הגברה בעוצמת האור!)";
+            } else if (signal === 'C') {
+                statusBox.className = 'sending-c';
+                statusDiv.innerHTML = "<strong>נשלח אות: C</strong> (אין שינוי או שהאור נחלש)";
+            }
+
+            // 2. שליחה פיזית למיקרוביט (רק אם מחוברים לחומרה ולא בסימולציה)
+            if (writer && !isSimulationMode) {
+                try {
+                    await writer.write(signal + '\n');
+                } catch (e) {
+                    console.error("שגיאה בשליחת נתונים למיקרוביט", e);
+                }
             }
         }
 
-        // לולאת קריאת הנתונים מהמיקרוביט
+        // לולאת קריאה אמיתית מהמיקרוביט
         async function readLoop() {
-            while (port.readable && isProcessing) {
+            while (port.readable && isProcessing && !isSimulationMode) {
                 try {
                     const { value, done } = await reader.read();
                     if (done) break;
                     
                     readBuffer += value;
                     let lines = readBuffer.split('\n');
-                    readBuffer = lines.pop(); // שמירת השארית שלא הסתיימה בירידת שורה
+                    readBuffer = lines.pop();
 
                     for (let line of lines) {
                         let currentLight = parseInt(line.trim());
-                        
-                        // בדיקה שאכן קיבלנו מספר תקין
                         if (!isNaN(currentLight)) {
-                            lightDisplay.innerText = currentLight + " (Micro:bit)";
-
-                            if (previousLight !== null) {
-                                let diff = currentLight - previousLight;
-
-                                // אם יש עלייה של יותר מ-5 ברמת האור (מניעת רגישות יתר)
-                                if (diff > 5) {
-                                    sendCommand('S'); // S = Spike / Stormy
-                                } 
-                                // אם אין שינוי משמעותי, או שיש ירידה באור
-                                else if (Math.abs(diff) <= 5 || diff < 0) {
-                                    sendCommand('C'); // C = Calm / Constant
-                                }
-                            }
-                            previousLight = currentLight;
+                            processLightReading(currentLight);
                         }
                     }
                 } catch (error) {
-                    console.error("שגיאה בקריאת נתונים:", error);
+                    console.error(error);
                     break;
                 }
             }
         }
 
-        // הפעלת העיבוד
+        // כפתור הפעלה/הפסקה של העיבוד וההדגמה
         startBtn.addEventListener('click', () => {
             if (!isProcessing) {
                 isProcessing = true;
-                startBtn.innerText = "מפסיק פעולה...";
-                document.getElementById('status').childNodes[0].nodeValue = "קורא נתונים מהמיקרוביט... ";
-                readLoop();
+                startBtn.innerText = "עצור עיבוד והדגמה";
+                
+                if (isSimulationMode) {
+                    // במצב הדמיה: נדגום את מצב הסליידר כל 400 מילישניות
+                    previousLight = parseInt(lightSlider.value);
+                    simInterval = setInterval(() => {
+                        let currentVal = parseInt(lightSlider.value);
+                        processLightReading(currentVal);
+                    }, 400);
+                } else {
+                    // במצב חומרה: נתחיל להקשיב לחיבור הטורי
+                    readLoop();
+                }
             } else {
                 isProcessing = false;
                 startBtn.innerText = "2. התחל לעבד נתונים";
-                document.getElementById('status').childNodes[0].nodeValue = "העיבוד הופסק. ";
-                document.getElementById('signalSent').innerText = "";
+                statusDiv.innerText = "העיבוד הופסק.";
+                statusBox.innerText = "?";
+                statusBox.className = "";
+                lightDisplay.innerText = "רמת אור נוכחית: ---";
                 previousLight = null;
+                if (simInterval) clearInterval(simInterval);
             }
         });
     </script>
