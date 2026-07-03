@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - זיהוי הבעות פנים ומגע</title>
+    <title>PLD - הבעות פנים וזיהוי מגע תלת-ממדי</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -73,7 +73,7 @@
 </head>
 <body>
 
-    <h1>מעבדת PLD: הבעות פנים ומגע (קנה מידה דינמי)</h1>
+    <h1>מעבדת PLD: הבעות פנים ומגע עומק (3D)</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
@@ -129,9 +129,10 @@
         let lastSendTime = 0;
         const SEND_COOLDOWN = 300; 
 
-        // רגישות
+        // רגישות וסף המגע
         const EXPRESSION_THRESHOLD = 0.005; 
-        const TOUCH_MULTIPLIER = 1.2; // המכפיל של רוחב הפנים - מגדיר כמה רחוק מהפנים נחשב "מגע"
+        const TOUCH_MULTIPLIER = 1.2; // רדיוס המגע על המסך (דו-ממד)
+        const DEPTH_MULTIPLIER = 1.0; // סבולת העומק: כמה היד יכולה להיות "רחוקה" מהפנים בציר העומק כדי להיחשב מגע
 
         const holistic = new Holistic({locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
@@ -169,23 +170,36 @@
             return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
         }
 
-        function getCenter(landmarks) {
-            if (!landmarks || landmarks.length === 0) return null;
-            let sumX = 0, sumY = 0;
-            landmarks.forEach(lm => {
-                sumX += lm.x;
-                sumY += lm.y;
-            });
-            return { x: sumX / landmarks.length, y: sumY / landmarks.length };
-        }
+        // פונקציה חדשה שבודקת מגע ב-3D באמצעות מודל הגוף
+        function isHandTouchingFace3D(poseLandmarks, faceWidth) {
+            if (!poseLandmarks) return false;
 
-        // שים לב שהפונקציה מקבלת עכשיו את הסף (threshold) הדינמי כפרמטר
-        function isHandTouchingFace(handLandmarks, faceCenter, dynamicThreshold) {
-            if (!handLandmarks || !faceCenter) return false;
-            for (let i of [0, 8]) { // 0 = שורש כף יד, 8 = קצה אצבע מורה
-                let lm = handLandmarks[i];
-                let dist = Math.hypot(lm.x - faceCenter.x, lm.y - faceCenter.y);
-                if (dist < dynamicThreshold) return true;
+            // ניקח את האף (נקודה 0) בתור המרכז התלת-ממדי של הפנים
+            const nose = poseLandmarks[0];
+            if (!nose) return false;
+
+            const xyThreshold = faceWidth * TOUCH_MULTIPLIER; // סף לרוחב/גובה
+            const zThreshold = faceWidth * DEPTH_MULTIPLIER;  // סף לעומק (המרחק אל המצלמה)
+
+            // הנקודות שאותן נבדוק מול הפנים: 
+            // 15: שורש כף יד שמאל, 19: אצבע מורה שמאל
+            // 16: שורש כף יד ימין, 20: אצבע מורה ימין
+            const handPoints = [15, 19, 16, 20]; 
+            
+            for (let i of handPoints) {
+                let handPart = poseLandmarks[i];
+                if (!handPart) continue;
+
+                // בדיקת המרחק הדו-ממדי (X ו-Y)
+                let xyDist = Math.hypot(handPart.x - nose.x, handPart.y - nose.y);
+                
+                // בדיקת המרחק בעומק (Z)
+                let zDist = Math.abs(handPart.z - nose.z);
+
+                // רק אם היד קרובה לפנים גם ב-XY וגם נמצאת קרוב אליהן בציר ה-Z, נחשיב את זה כמגע
+                if (xyDist < xyThreshold && zDist < zThreshold) {
+                    return true;
+                }
             }
             return false;
         }
@@ -214,8 +228,9 @@
             let triggerS = false;
             let eventText = "";
 
-            if (results.faceLandmarks) {
-                // הבעות פנים
+            if (results.faceLandmarks && results.poseLandmarks) {
+                
+                // --- 1. זיהוי הבעות פנים ---
                 const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                 const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
                 const rightEyeDist = getDistance(results.faceLandmarks[386], results.faceLandmarks[374]);
@@ -236,25 +251,19 @@
                 lastLeftEyeDist = leftEyeDist;
                 lastRightEyeDist = rightEyeDist;
 
-                // --- מנגנון המגע הדינמי החדש ---
-                let currentFaceCenter = getCenter(results.faceLandmarks);
-                
-                // חישוב רוחב הפנים הנוכחי כמרחק בין הקצוות החיצוניים של העיניים (נקודות 33 ו-263)
+                // --- 2. זיהוי מגע תלת-ממדי ---
+                // חישוב רוחב הפנים עבור קנה המידה הדינמי
                 const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
                 
-                // קביעת הרדיוס למגע: רוחב הפנים כפול המקדם שלנו
-                const dynamicTouchThreshold = faceWidth * TOUCH_MULTIPLIER;
-
-                if (currentFaceCenter && !triggerS) { 
-                    if (isHandTouchingFace(results.leftHandLandmarks, currentFaceCenter, dynamicTouchThreshold) || 
-                        isHandTouchingFace(results.rightHandLandmarks, currentFaceCenter, dynamicTouchThreshold)) {
+                if (!triggerS) { // בודקים מגע רק אם לא הייתה קפיצה של הבעות הפנים
+                    if (isHandTouchingFace3D(results.poseLandmarks, faceWidth)) {
                         triggerS = true;
                         eventText = "מגע בפנים!";
                     }
                 }
             }
 
-            // שליחה למיקרוביט
+            // שליחה למיקרוביט והצגה על המסך
             const now = Date.now();
             if (triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S');
