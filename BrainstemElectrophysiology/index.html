@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - זיהוי תלת-ממדי מתקדם</title>
+    <title>PLD - מעבדה ברזולוציה גבוהה</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -13,46 +13,49 @@
         button { font-size: 18px; padding: 12px 25px; margin: 10px; cursor: pointer; border: none; border-radius: 8px; background-color: #0078D7; color: white; transition: 0.3s; }
         button:disabled { background-color: #444; cursor: not-allowed; color: #888; }
         button:hover:not(:disabled) { background-color: #005a9e; }
-        #container { position: relative; margin: 10px auto; width: 640px; height: 480px; border: 2px solid #555; border-radius: 10px; overflow: hidden; background-color: black; }
+        
+        /* הגדלנו את הקונטיינר כדי שיתאים ליחס HD 16:9 */
+        #container { position: relative; margin: 10px auto; width: 800px; height: 450px; border: 2px solid #555; border-radius: 10px; overflow: hidden; background-color: black; }
         video { display: none; }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        
         #status { font-size: 24px; margin-top: 10px; min-height: 35px; font-weight: bold; }
         .controls { background-color: #222; padding: 10px; border-radius: 10px; display: inline-block; margin-bottom: 10px; border: 1px solid #444;}
         
-        /* עיצוב משופר לחלונית הדיבאג */
-        #debug-panel { background-color: rgba(0,0,0,0.8); border: 1px solid #444; padding: 15px; border-radius: 10px; display: inline-block; margin-top: 15px; font-family: monospace; text-align: left; direction: ltr; min-width: 300px; }
+        #debug-panel { background-color: rgba(0,0,0,0.8); border: 1px solid #444; padding: 15px; border-radius: 10px; display: inline-block; margin-top: 15px; font-family: monospace; text-align: left; direction: ltr; min-width: 320px; }
         .debug-row { margin: 5px 0; font-size: 15px; display: flex; justify-content: space-between;}
         .val-good { color: #4CAF50; font-weight: bold;}
         .val-bad { color: #F44336; font-weight: bold;}
+        .val-warn { color: #FFC107; font-weight: bold;}
     </style>
 </head>
 <body>
 
-    <h1>מעבדת PLD: זיהוי עומק ביומטרי</h1>
+    <h1>מעבדת PLD: זיהוי עומק ב-HD (תיקון למרחק)</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
-        <button id="startCamBtn">2. הפעל מצלמה (PLD)</button>
+        <button id="startCamBtn">2. הפעל מצלמה (HD)</button>
     </div>
 
     <div id="status">ממתין לפעולה...</div>
 
     <div id="container">
         <video id="input_video" autoplay playsinline></video>
-        <canvas id="output_canvas" width="640" height="480"></canvas>
+        <canvas id="output_canvas" width="1280" height="720"></canvas>
     </div>
 
     <div id="debug-panel">
-        <div style="text-align: center; color: #aaa; margin-bottom: 10px; border-bottom: 1px solid #444; padding-bottom: 5px;">מנוע זיהוי תלת-ממדי</div>
+        <div style="text-align: center; color: #aaa; margin-bottom: 10px; border-bottom: 1px solid #444; padding-bottom: 5px;">בקרת מרחק ותלת-ממד</div>
+        <div class="debug-row"><span>Face Size (Stable > 0.03):</span> <span id="dbg-facesize" style="color: #888;">0.00</span></div>
         <div class="debug-row"><span>XY Overlap:</span> <span id="dbg-overlap" style="color: #888;">No</span></div>
         <div class="debug-row"><span>Perspective Ratio:</span> <span id="dbg-ratio" style="color: #888;">0.00</span></div>
         <div class="debug-row"><span>3D Z-Depth Diff:</span> <span id="dbg-z" style="color: #888;">0.00</span></div>
     </div>
 
     <script>
-        // -- הגדרות מיקרוביט --
-        let port;
-        let writer;
+        // -- חיבור למיקרוביט --
+        let port, writer;
         const connectBtn = document.getElementById('connectBtn');
         const statusDiv = document.getElementById('status');
 
@@ -73,24 +76,22 @@
 
         async function sendCommand(cmd) { if (writer) await writer.write(cmd + '\r\n'); }
 
-        // -- פרמטרים לזיהוי --
+        // -- פרמטרים חדשים מותאמים למרחק --
         const SEND_COOLDOWN = 300; 
-        const EXPRESSION_THRESHOLD = 0.005; 
         
-        // 1. רדיוס הפנים למגע (XY)
+        // עכשיו זה אחוז מרוחב הפנים, לא מספר קבוע! 0.06 אומר 6% מרוחב הפנים שלך.
+        const EXPRESSION_RATIO = 0.06; 
+        
         const TOUCH_MULTIPLIER = 1.3; 
-        // 2. יחס מקסימלי מותר בין גודל היד לפנים (פרספקטיבה)
-        const MAX_HAND_FACE_RATIO = 1.9; 
-        // 3. עומק Z מקסימלי מותר! מחושב כאחוז מרוחב הכתפיים. 
-        // 0.4 אומר שהמרחק בין היד לאף יכול להיות עד 40% מרוחב הכתפיים שלך.
-        const MAX_Z_DEPTH_TOLERANCE = 1.0; 
+        const MAX_HAND_FACE_RATIO = 2.0; // הוגדל מעט כי ב-HD הידיים נראות קצת יותר מדויקות
+        const MAX_Z_DEPTH_TOLERANCE = 0.45; 
 
-        // -- אלמנטים בדיבאג --
+        // -- אלמנטים דיבאג --
+        const dbgFaceSize = document.getElementById('dbg-facesize');
         const dbgOverlap = document.getElementById('dbg-overlap');
         const dbgRatio = document.getElementById('dbg-ratio');
         const dbgZ = document.getElementById('dbg-z');
 
-        // -- הגדרות MediaPipe --
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
@@ -103,21 +104,29 @@
             return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
         }});
 
+        // הגדרנו אופטימיזציות למעקב מדויק יותר
         holistic.setOptions({
-            modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false,
-            smoothSegmentation: false, refineFaceLandmarks: true,
-            minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+            modelComplexity: 1, 
+            smoothLandmarks: true, 
+            enableSegmentation: false,
+            smoothSegmentation: false, 
+            refineFaceLandmarks: true,
+            minDetectionConfidence: 0.5, 
+            minTrackingConfidence: 0.5
         });
 
         holistic.onResults(onResults);
 
         startCamBtn.addEventListener('click', () => {
             startCamBtn.disabled = true;
-            statusDiv.innerText = "טוען מודל זיהוי...";
+            statusDiv.innerText = "טוען מצלמת HD...";
             statusDiv.style.color = "white";
+            
+            // השדרוג העיקרי למצלמה: דרישה לרזולוציה גבוהה
             const camera = new Camera(videoElement, {
                 onFrame: async () => { await holistic.send({image: videoElement}); },
-                width: 640, height: 480
+                width: 1280, 
+                height: 720
             });
             camera.start();
         });
@@ -134,13 +143,20 @@
             return { x: sumX / landmarks.length, y: sumY / landmarks.length };
         }
 
-        // --- פונקציית הבדיקה המשולשת לזיהוי מגע תלת-ממדי ---
         function checkAdvanced3DTouch(handLandmarks, faceCenter, faceWidth, poseLandmarks) {
             if (!handLandmarks || !faceCenter || !faceWidth || !poseLandmarks) return false;
 
-            // בדיקה 1: חפיפה על המסך (XY)
+            // הגנת מרחק: אם הפנים קטנות מדי מ-3% משטח המסך, אי אפשר לחשב פרופורציות בלי שגיאות מתמטיות.
+            dbgFaceSize.innerText = faceWidth.toFixed(3);
+            if (faceWidth < 0.03) {
+                dbgFaceSize.className = "val-warn";
+                dbgOverlap.innerText = "Too Far"; dbgOverlap.className = "val-warn";
+                return false;
+            }
+            dbgFaceSize.className = "val-good";
+
             let isOverlapping = false;
-            for (let i of [8, 12, 16, 20]) { // קצות האצבעות
+            for (let i of [8, 12, 16, 20]) { 
                 if (getDistance(handLandmarks[i], faceCenter) < faceWidth * TOUCH_MULTIPLIER) {
                     isOverlapping = true; break;
                 }
@@ -152,49 +168,35 @@
             }
             dbgOverlap.innerText = "Yes"; dbgOverlap.className = "val-good";
 
-            // בדיקה 2: פרופורציית פרספקטיבה (Hand vs Face)
             let handSize = getDistance(handLandmarks[0], handLandmarks[9]);
             let ratio = handSize / faceWidth;
             dbgRatio.innerText = `${ratio.toFixed(2)} (Max: ${MAX_HAND_FACE_RATIO})`;
             
             if (ratio > MAX_HAND_FACE_RATIO) {
                 dbgRatio.className = "val-bad";
-                return false; // היד קרובה מדי למצלמה (אשליית פרספקטיבה)
+                return false; 
             }
             dbgRatio.className = "val-good";
 
-            // בדיקה 3: עומק 3D יחסי (Z-Axis מסונכרן לרוחב כתפיים)
-            // כתף שמאל = 11, כתף ימין = 12, אף = 0.
             let shoulderWidth = getDistance(poseLandmarks[11], poseLandmarks[12]);
-            if (shoulderWidth === 0) shoulderWidth = 0.1; // מניעת חילוק באפס
+            if (shoulderWidth < 0.05) return false; // הגנה נוספת כשהמשתמש רחוק מאוד
             
-            // ב-MediaPipe poseLandmarks, ציר ה-Z הוא יחסי.
-            // נשווה את ה-Z של האף (0) ל-Z של שורש כף היד (15 או 16).
-            // אנחנו משתמשים בשורש כף היד כי הוא הכי יציב בציר ה-Z.
-            
-            // נזהה אם זו יד ימין או שמאל (לפי מערכת הצירים של התמונה, 15 זה שמאל המשתמש, 16 זה ימין)
-            // נחשב את העומק של שתי הידיים וניקח את זאת שקרובה יותר לאף במרחב הדו-ממדי.
             let noseZ = poseLandmarks[0].z;
             let leftWristZ = poseLandmarks[15].z;
             let rightWristZ = poseLandmarks[16].z;
             
-            // ניקח את ההפרש המינימלי לעומת האף
-            let zDiffLeft = Math.abs(noseZ - leftWristZ);
-            let zDiffRight = Math.abs(noseZ - rightWristZ);
-            let activeZDiff = Math.min(zDiffLeft, zDiffRight);
-            
-            // ננרמל את ההפרש ביחס לרוחב הכתפיים של המשתמש
+            let activeZDiff = Math.min(Math.abs(noseZ - leftWristZ), Math.abs(noseZ - rightWristZ));
             let normalizedZDepth = activeZDiff / shoulderWidth;
             
             dbgZ.innerText = `${normalizedZDepth.toFixed(2)} (Max: ${MAX_Z_DEPTH_TOLERANCE.toFixed(2)})`;
 
             if (normalizedZDepth > MAX_Z_DEPTH_TOLERANCE) {
                 dbgZ.className = "val-bad";
-                return false; // היד הרבה יותר קרובה למצלמה מאשר הפנים
+                return false; 
             }
             
             dbgZ.className = "val-good";
-            return true; // עברנו את כל 3 הבדיקות!
+            return true; 
         }
 
         function drawPLDPoints(landmarks, color = "white", size = 3) {
@@ -220,45 +222,41 @@
             let eventText = "";
 
             if (results.faceLandmarks && results.poseLandmarks) {
-                // 1. הבעות פנים
+                
+                // חישוב רוחב הפנים עבור סף דינמי
+                const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
+                
+                // סף הרגישות כעת משתנה בהתאם למרחק שלך מהמצלמה!
+                const dynamicExpressionThreshold = faceWidth * EXPRESSION_RATIO;
+
                 const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                 const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
                 const rightEyeDist = getDistance(results.faceLandmarks[386], results.faceLandmarks[374]);
 
-                if (lastMouthDist !== null) {
-                    if (Math.abs(mouthDist - lastMouthDist) > EXPRESSION_THRESHOLD) {
+                if (lastMouthDist !== null && faceWidth > 0.03) { // נחשב הבעות רק אם הפנים גדולות מספיק
+                    if (Math.abs(mouthDist - lastMouthDist) > dynamicExpressionThreshold) {
                         triggerS = true; eventText = "תנועת פה!";
                     }
-                    else if (Math.abs(leftEyeDist - lastLeftEyeDist) > EXPRESSION_THRESHOLD || 
-                             Math.abs(rightEyeDist - lastRightEyeDist) > EXPRESSION_THRESHOLD) {
+                    else if (Math.abs(leftEyeDist - lastLeftEyeDist) > dynamicExpressionThreshold || 
+                             Math.abs(rightEyeDist - lastRightEyeDist) > dynamicExpressionThreshold) {
                         triggerS = true; eventText = "תנועת עיניים!";
                     }
                 }
 
                 lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist; lastRightEyeDist = rightEyeDist;
 
-                // 2. זיהוי מגע תלת-ממדי משולב
                 if (!triggerS) { 
                     let currentFaceCenter = getCenter(results.faceLandmarks);
-                    const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
-                    
                     let touchLeft = checkAdvanced3DTouch(results.leftHandLandmarks, currentFaceCenter, faceWidth, results.poseLandmarks);
                     let touchRight = checkAdvanced3DTouch(results.rightHandLandmarks, currentFaceCenter, faceWidth, results.poseLandmarks);
                     
                     if (touchLeft || touchRight) {
                         triggerS = true;
-                        eventText = "מגע תלת-ממדי מאומת!";
-                    } else if (!touchLeft && !touchRight && 
-                              (!results.leftHandLandmarks && !results.rightHandLandmarks)) {
-                        // איפוס תצוגת דיבאג כשאין ידיים
-                        dbgOverlap.innerText = "No"; dbgOverlap.className = ""; dbgOverlap.style.color = "#888";
-                        dbgRatio.innerText = "0.00"; dbgRatio.className = ""; dbgRatio.style.color = "#888";
-                        dbgZ.innerText = "0.00"; dbgZ.className = ""; dbgZ.style.color = "#888";
+                        eventText = "מגע תלת-ממדי!";
                     }
                 }
             }
 
-            // עדכון הממשק והשליחה
             const now = Date.now();
             if (triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S'); lastSendTime = now;
