@@ -171,13 +171,13 @@
             
             // מוודא שקיבלנו מספר תקין
             if (!isNaN(currentLightLevel)) {
-                wordDisplay.innerText = currentLightLevel;
+                // wordDisplay.innerText = currentLightLevel;
 
                 if (previousLightLevel !== null) {
                     // בדיקה אם יש עלייה באור מעבר לסף שהגדרנו
                     if (currentLightLevel > previousLightLevel + threshold) {
                         sendCommand('S'); // שליחת 'S' למיקרוביט
-                        statusDiv.innerText = "זוהתה עלייה באור! נשלח S";
+                        // statusDiv.innerText = "זוהתה עלייה באור! נשלח S";
                         
                         // ניקוי חיווי הסטטוס אחרי 2 שניות
                         setTimeout(() => {
