@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>שליטת אור במיקרוביט</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            background-color: #f0f8ff;
+            padding: 50px;
+        }
+        button {
+            font-size: 20px;
+            padding: 15px 30px;
+            margin: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 10px;
+            background-color: #0078D7;
+            color: white;
+            transition: 0.3s;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
+            background-color: #005a9e;
+        }
+        #lightDisplay {
+            font-size: 60px;
+            font-weight: bold;
+            color: #333;
+            margin: 40px 0;
+            min-height: 80px;
+            direction: ltr;
+        }
+        #status {
+            font-size: 18px;
+            color: #666;
+            margin-top: 20px;
+        }
+        .signal {
+            font-size: 24px;
+            font-weight: bold;
+            color: #d9534f;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>קריאת חיישן אור מהמיקרוביט</h1>
+    <button id="connectBtn">1. התחבר למיקרוביט (USB)</button>
+    <button id="startBtn" disabled>2. התחל לעבד נתונים</button>
+    
+    <div id="lightDisplay">...</div>
+    <div id="status">ממתין לחיבור... <br><span id="signalSent" class="signal"></span></div>
+
+    <script>
+        let port;
+        let writer;
+        let reader;
+        let isProcessing = false;
+        let previousLight = null;
+        let readBuffer = '';
+
+        const connectBtn = document.getElementById('connectBtn');
+        const startBtn = document.getElementById('startBtn');
+        const lightDisplay = document.getElementById('lightDisplay');
+        const statusDiv = document.getElementById('status');
+        const signalSent = document.getElementById('signalSent');
+
+        // פונקציה להתחברות למיקרוביט (קריאה וכתיבה)
+        connectBtn.addEventListener('click', async () => {
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+                
+                // הגדרת ערוץ כתיבה (לשלוח C ו-S)
+                const textEncoder = new TextEncoderStream();
+                textEncoder.readable.pipeTo(port.writable);
+                writer = textEncoder.writable.getWriter();
+
+                // הגדרת ערוץ קריאה (לקבל את רמת האור)
+                const textDecoder = new TextDecoderStream();
+                port.readable.pipeTo(textDecoder.writable);
+                reader = textDecoder.readable.getReader();
+                
+                statusDiv.innerHTML = "מחובר למיקרוביט בהצלחה! <br><span id='signalSent' class='signal'></span>";
+                startBtn.disabled = false;
+            } catch (error) {
+                console.error('שגיאת התחברות:', error);
+                statusDiv.innerHTML = "ההתחברות נכשלה. ודא שהמיקרוביט מחובר.";
+            }
+        });
+
+        // פונקציה לשליחת פקודות
+        async function sendCommand(cmd) {
+            if (writer) {
+                await writer.write(cmd + '\n');
+                document.getElementById('signalSent').innerText = "נשלח: " + cmd;
+            }
+        }
+
+        // לולאת קריאת הנתונים מהמיקרוביט
+        async function readLoop() {
+            while (port.readable && isProcessing) {
+                try {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    readBuffer += value;
+                    let lines = readBuffer.split('\n');
+                    readBuffer = lines.pop(); // שמירת השארית שלא הסתיימה בירידת שורה
+
+                    for (let line of lines) {
+                        let currentLight = parseInt(line.trim());
+                        
+                        // בדיקה שאכן קיבלנו מספר תקין
+                        if (!isNaN(currentLight)) {
+                            lightDisplay.innerText = currentLight + " (Micro:bit)";
+
+                            if (previousLight !== null) {
+                                let diff = currentLight - previousLight;
+
+                                // אם יש עלייה של יותר מ-5 ברמת האור (מניעת רגישות יתר)
+                                if (diff > 5) {
+                                    sendCommand('S'); // S = Spike / Stormy
+                                } 
+                                // אם אין שינוי משמעותי, או שיש ירידה באור
+                                else if (Math.abs(diff) <= 5 || diff < 0) {
+                                    sendCommand('C'); // C = Calm / Constant
+                                }
+                            }
+                            previousLight = currentLight;
+                        }
+                    }
+                } catch (error) {
+                    console.error("שגיאה בקריאת נתונים:", error);
+                    break;
+                }
+            }
+        }
+
+        // הפעלת העיבוד
+        startBtn.addEventListener('click', () => {
+            if (!isProcessing) {
+                isProcessing = true;
+                startBtn.innerText = "מפסיק פעולה...";
+                document.getElementById('status').childNodes[0].nodeValue = "קורא נתונים מהמיקרוביט... ";
+                readLoop();
+            } else {
+                isProcessing = false;
+                startBtn.innerText = "2. התחל לעבד נתונים";
+                document.getElementById('status').childNodes[0].nodeValue = "העיבוד הופסק. ";
+                document.getElementById('signalSent').innerText = "";
+                previousLight = null;
+            }
+        });
+    </script>
+</body>
+</html>
