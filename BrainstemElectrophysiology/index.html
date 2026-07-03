@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - זיהוי תנועת פנים</title>
+    <title>PLD - זיהוי הבעות פנים ומגע</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -47,7 +47,7 @@
             background-color: black;
         }
         video {
-            display: none; /* מסתירים את הוידאו כדי לראות רק את ה-PLD */
+            display: none; 
         }
         canvas {
             position: absolute;
@@ -73,7 +73,7 @@
 </head>
 <body>
 
-    <h1>מעבדת PLD: תנועה ומגע בפנים</h1>
+    <h1>מעבדת PLD: הבעות פנים ומגע</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
@@ -122,13 +122,18 @@
         const canvasCtx = canvasElement.getContext('2d');
         const startCamBtn = document.getElementById('startCamBtn');
 
-        let lastFaceCenter = null;
+        // משתנים למעקב אחר מצב הפנים
+        let lastMouthDist = null;
+        let lastLeftEyeDist = null;
+        let lastRightEyeDist = null;
+        
         let lastSendTime = 0;
-        const SEND_COOLDOWN = 300; // מינימום 300 מילישניות בין שליחות רצופות של S
-        const MOTION_THRESHOLD = 0.03; // רגישות תנועת הפנים (ערכים מנורמלים 0-1)
-        const TOUCH_DISTANCE = 0.15; // מרחק בין היד לפנים שייחשב כמגע
+        const SEND_COOLDOWN = 300; 
 
-        // אתחול מודל Holistic
+        // רגישות (Thresholds)
+        const EXPRESSION_THRESHOLD = 0.005; // שינוי מינימלי במרחק כדי להיחשב תנועת פה/עין
+        const TOUCH_DISTANCE = 0.15; // מרחק מגע ידיים בפנים
+
         const holistic = new Holistic({locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
         }});
@@ -138,7 +143,7 @@
             smoothLandmarks: true,
             enableSegmentation: false,
             smoothSegmentation: false,
-            refineFaceLandmarks: false,
+            refineFaceLandmarks: true, // מופעל כדי לקבל דיוק גבוה יותר בעיניים ובשפתיים
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
@@ -160,6 +165,13 @@
             camera.start();
         });
 
+        // פונקציית עזר לחישוב מרחק בין שתי נקודות
+        function getDistance(lm1, lm2) {
+            if (!lm1 || !lm2) return 0;
+            return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
+        }
+
+        // מרכז הפנים הכללי (לצורך חישוב מגע של הידיים)
         function getCenter(landmarks) {
             if (!landmarks || landmarks.length === 0) return null;
             let sumX = 0, sumY = 0;
@@ -172,7 +184,6 @@
 
         function isHandTouchingFace(handLandmarks, faceCenter) {
             if (!handLandmarks || !faceCenter) return false;
-            // בודקים אם קצה האצבע המורה או שורש כף היד קרובים למרכז הפנים
             for (let i of [0, 8]) { // 0 = שורש כף יד, 8 = קצה אצבע מורה
                 let lm = handLandmarks[i];
                 let dist = Math.hypot(lm.x - faceCenter.x, lm.y - faceCenter.y);
@@ -185,7 +196,6 @@
             if (!landmarks) return;
             canvasCtx.fillStyle = color;
             landmarks.forEach(lm => {
-                // המרת קואורדינטות מנורמלות (0-1) לגודל הקנבס
                 const x = lm.x * canvasElement.width;
                 const y = lm.y * canvasElement.height;
                 canvasCtx.beginPath();
@@ -195,47 +205,66 @@
         }
 
         function onResults(results) {
-            // ניקוי הקנבס (רקע שחור)
             canvasCtx.fillStyle = 'black';
             canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
-            // 1. ציור ה-PLD (נקודות בלבד)
-            // כדי לחסוך עומס ויזואלי ולשמור על מראה קלאסי של PLD, נצייר רק נקודות מפתח
-            drawPLDPoints(results.poseLandmarks, "white", 4); 
-            // אפשר להקטין את כמות נקודות הפנים אם רוצים PLD פחות צפוף, כרגע נצייר את כולן בקטן
-            drawPLDPoints(results.faceLandmarks, "rgba(255, 255, 255, 0.5)", 2);
-            drawPLDPoints(results.leftHandLandmarks, "white", 3);
-            drawPLDPoints(results.rightHandLandmarks, "white", 3);
+            // ציור ה-PLD בצבעים שונים
+            // גוף - צבע מג'נטה (ורוד עז)
+            drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); 
+            // פנים - צבע טורקיז חצי-שקוף
+            drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2);
+            // ידיים - צבע צהוב
+            drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3);
+            drawPLDPoints(results.rightHandLandmarks, "#FFFF00", 3);
 
-            // 2. לוגיקת זיהוי תנועה ומגע
             let triggerS = false;
-            let currentFaceCenter = getCenter(results.faceLandmarks);
+            let eventText = "";
 
-            if (currentFaceCenter) {
-                // בדיקת תנועה (השוואה למיקום הקודם)
-                if (lastFaceCenter) {
-                    let moveDist = Math.hypot(currentFaceCenter.x - lastFaceCenter.x, currentFaceCenter.y - lastFaceCenter.y);
-                    if (moveDist > MOTION_THRESHOLD) {
+            if (results.faceLandmarks) {
+                // בדיקת הבעות פנים (מרחקים פנימיים)
+                // אינדקסים לפי המודל של MediaPipe:
+                // פה: 13 (שפה עליונה), 14 (שפה תחתונה)
+                // עין שמאל: 159 (עפעף עליון), 145 (עפעף תחתון)
+                // עין ימין: 386 (עפעף עליון), 374 (עפעף תחתון)
+                
+                const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
+                const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
+                const rightEyeDist = getDistance(results.faceLandmarks[386], results.faceLandmarks[374]);
+
+                if (lastMouthDist !== null) {
+                    if (Math.abs(mouthDist - lastMouthDist) > EXPRESSION_THRESHOLD) {
                         triggerS = true;
-                        statusDiv.innerText = "זיהוי: תנועת פנים!";
+                        eventText = "תנועת פה!";
+                    }
+                    else if (Math.abs(leftEyeDist - lastLeftEyeDist) > EXPRESSION_THRESHOLD || 
+                             Math.abs(rightEyeDist - lastRightEyeDist) > EXPRESSION_THRESHOLD) {
+                        triggerS = true;
+                        eventText = "תנועת עיניים (מצמוץ/פתיחה)!";
                     }
                 }
-                lastFaceCenter = currentFaceCenter;
 
-                // בדיקת מגע ידיים
-                if (isHandTouchingFace(results.leftHandLandmarks, currentFaceCenter) || 
-                    isHandTouchingFace(results.rightHandLandmarks, currentFaceCenter)) {
-                    triggerS = true;
-                    statusDiv.innerText = "זיהוי: מגע בפנים!";
+                lastMouthDist = mouthDist;
+                lastLeftEyeDist = leftEyeDist;
+                lastRightEyeDist = rightEyeDist;
+
+                // בדיקת מגע ידיים בפנים
+                let currentFaceCenter = getCenter(results.faceLandmarks);
+                if (currentFaceCenter && !triggerS) { // אם כבר זיהינו הבעה, אין צורך לבדוק מגע
+                    if (isHandTouchingFace(results.leftHandLandmarks, currentFaceCenter) || 
+                        isHandTouchingFace(results.rightHandLandmarks, currentFaceCenter)) {
+                        triggerS = true;
+                        eventText = "מגע בפנים!";
+                    }
                 }
             }
 
-            // 3. שליחה למיקרוביט
+            // עדכון ממשק ושליחה למיקרוביט
             const now = Date.now();
             if (triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S');
                 lastSendTime = now;
-                statusDiv.style.color = "#FF9800"; // כתום בעת זיהוי
+                statusDiv.innerText = `זיהוי: ${eventText}`;
+                statusDiv.style.color = "#FF9800";
                 
                 setTimeout(() => {
                     if (Date.now() - lastSendTime >= SEND_COOLDOWN) {
@@ -244,8 +273,7 @@
                     }
                 }, 500);
             } else if (!triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
-                // אם רוצים שברירת המחדל תכתוב משהו כשהכל שקט
-                if(statusDiv.innerText !== "עוקב..." && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!") {
+                if(statusDiv.innerText !== "עוקב..." && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!" && !statusDiv.innerText.includes("טוען")) {
                     statusDiv.innerText = "עוקב...";
                     statusDiv.style.color = "white";
                 }
