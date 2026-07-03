@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ניסוי אלקטרופיזיולוגי - איזור מס' 2</title>
     <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+    
     <style>
       body {
             font-family: 'Rubik', sans-serif;
@@ -86,169 +89,211 @@
             color: #00d2ff !important;
             animation: pulse 1.5s infinite;
         }
+
+           video {
+            display: none; /* מסתירים את הוידאו כדי לראות רק את ה-PLD */
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #status {
+            font-size: 20px;
+            margin-top: 15px;
+            min-height: 30px;
+            font-weight: bold;
+        }
+        .controls {
+            background-color: #333;
+            padding: 15px;
+            border-radius: 10px;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
-    <h1>ניסוי אלקטרופיזיולוגי - אזור מס' 2</h1>
-
-    <button id="connectBtn">1. התחבר למיקרוביט (USB)</button>
-    <button id="startBtn" disabled>2. התחל כיול ומדידה</button>
+    <h1>ניסוי אלקטרופיזיולוגי - אזור מס' 4</h1>
     
-    <div id="wordDisplay">...</div>
-    <div id="status">ממתין לחיבור...</div>
-    <div id="baselineDisplay"></div>
+    <div class="controls">
+        <button id="connectBtn">1. התחבר למיקרוביט</button>
+        <button id="startCamBtn">2. הפעל מצלמה (PLD)</button>
+    </div>
+
+    <div id="status">ממתין לפעולה...</div>
+
+    <div id="container">
+        <video id="input_video" autoplay playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
 
     <script>
+        // -- הגדרות מיקרוביט --
         let port;
         let writer;
-        let reader;
-        
-        let isReadingData = false;
-        let isCalibrating = false;
-        
-        let baselineLight = 0;
-        let calibrationReadings = [];
-        let lightHistory = []; // שומר את היסטוריית הקריאות ב-2 השניות האחרונות
-        
-        // פרמטרים שניתן לכוונן
-        const SLIGHT_THRESHOLD = 3;       // כמה אור מעל הבסיס ייחשב כעלייה קלה (C)
-        const SIGNIFICANT_THRESHOLD = 15; // כמה אור מעל המינימום ב-2 השניות האחרונות ייחשב לקפיצה (S)
-
         const connectBtn = document.getElementById('connectBtn');
-        const startBtn = document.getElementById('startBtn');
-        const wordDisplay = document.getElementById('wordDisplay');
         const statusDiv = document.getElementById('status');
-        const baselineDisplay = document.getElementById('baselineDisplay');
 
         connectBtn.addEventListener('click', async () => {
             try {
                 port = await navigator.serial.requestPort();
                 await port.open({ baudRate: 115200 });
-                
                 const textEncoder = new TextEncoderStream();
                 textEncoder.readable.pipeTo(port.writable);
                 writer = textEncoder.writable.getWriter();
-                
                 statusDiv.innerText = "מחובר למיקרוביט בהצלחה!";
-                startBtn.disabled = false;
-                
-                readLoop();
+                statusDiv.style.color = "#4CAF50";
             } catch (error) {
-                console.error('שגיאת התחברות:', error);
-                statusDiv.innerText = "ההתחברות נכשלה. ודא שהמיקרוביט מחובר ושאין חלון Console פתוח.";
+                console.error(error);
+                statusDiv.innerText = "שגיאת התחברות למיקרוביט.";
+                statusDiv.style.color = "#F44336";
             }
         });
-
-        async function readLoop() {
-            const textDecoder = new TextDecoderStream();
-            port.readable.pipeTo(textDecoder.writable);
-            reader = textDecoder.readable.getReader();
-            
-            let buffer = "";
-
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                
-                buffer += value;
-                let lines = buffer.split('\n');
-                buffer = lines.pop(); 
-
-                for (let line of lines) {
-                    let cleanLine = line.trim();
-                    if (cleanLine !== "" && isReadingData) {
-                        processLightLevel(cleanLine);
-                    }
-                }
-            }
-        }
 
         async function sendCommand(cmd) {
             if (writer) {
-                await writer.write(cmd + '\r\n'); // שימוש ב-\r\n תואם יותר למיקרוביט
+                await writer.write(cmd + '\r\n');
             }
         }
 
-        function processLightLevel(data) {
-            const currentLightLevel = parseInt(data);
-            if (isNaN(currentLightLevel)) return;
+        // -- הגדרות MediaPipe ו-PLD --
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const startCamBtn = document.getElementById('startCamBtn');
 
-            //wordDisplay.innerText = currentLightLevel;
-            const now = Date.now();
+        let lastFaceCenter = null;
+        let lastSendTime = 0;
+        const SEND_COOLDOWN = 300; // מינימום 300 מילישניות בין שליחות רצופות של S
+        const MOTION_THRESHOLD = 0.03; // רגישות תנועת הפנים (ערכים מנורמלים 0-1)
+        const TOUCH_DISTANCE = 0.15; // מרחק בין היד לפנים שייחשב כמגע
 
-            // 1. שלב הכיול (3 שניות ראשונות)
-            if (isCalibrating) {
-                calibrationReadings.push(currentLightLevel);
-                return; 
-            }
+        // אתחול מודל Holistic
+        const holistic = new Holistic({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
+        }});
 
-            // 2. עדכון חלון הזמן (2 השניות האחרונות)
-            lightHistory.push({ time: now, val: currentLightLevel });
-            // ניקוי נתונים ישנים (מעל 2000 מילישניות)
-            lightHistory = lightHistory.filter(item => now - item.time <= 2000);
-
-            // 3. ניתוח הנתונים בחלון הזמן
-            // מציאת הערך הנמוך ביותר ב-2 השניות האחרונות כדי לזהות קפיצה פתאומית
-            let minInWindow = Math.min(...lightHistory.map(item => item.val));
-            let isSignificantSpike = (currentLightLevel - minInWindow) >= SIGNIFICANT_THRESHOLD;
-
-            // 4. עץ ההחלטות ושליחת הפקודות
-            if (isSignificantSpike) {
-                // נשלח ברצף כל עוד הקפיצה נמצאת בתוך חלון ה-2 שניות
-                sendCommand('S');
-                // את השורה הבאה ניתן להוסיף לקוד חזרה מתיעוד על מנת לראות את הפלט למיקרוביט באפליקציה - רועי
-                // statusDiv.innerText = "S (קפיצה חדה זוהתה!)";
-            } 
-            else if (currentLightLevel >= baselineLight + SLIGHT_THRESHOLD) {
-                // אין קפיצה חדה בחלון הזמן, אבל עדיין מואר יותר מרמת הבסיס
-                sendCommand('C');
-                // את השורה הבאה ניתן להוסיף לקוד חזרה מתיעוד על מנת לראות את הפלט למיקרוביט באפליקציה - רועי
-                // statusDiv.innerText = "C (תאורה מעל הבסיס)";
-            } 
-            else {
-                // חזרנו לרמת הבסיס או חשוך יותר
-                // את השורה הבאה ניתן להוסיף לקוד חזרה מתיעוד על מנת לראות את הפלט למיקרוביט באפליקציה - רועי
-                //statusDiv.innerText = "רמת בסיס (לא שולח כלום)";
-            }
-        }
-
-        startBtn.addEventListener('click', () => {
-            if (!isReadingData) {
-                // תחילת מדידה וכיול
-                isReadingData = true;
-                isCalibrating = true;
-                calibrationReadings = [];
-                lightHistory = [];
-                
-                startBtn.innerText = "הפסק קריאה";
-                statusDiv.innerText = "מכייל חיישן למשך 3 שניות...";
-                statusDiv.style.color = "blue";
-                baselineDisplay.innerText = "";
-
-                // סיום הכיול אחרי 3000 מילישניות
-                setTimeout(() => {
-                    if (!isReadingData) return; // במידה והמשתמש עצר לפני שהסתיים הכיול
-                    isCalibrating = false;
-                    
-                    // חישוב ממוצע רמת הבסיס
-                    let sum = calibrationReadings.reduce((a, b) => a + b, 0);
-                    baselineLight = Math.round(sum / calibrationReadings.length) || 0;
-                    
-                    //baselineDisplay.innerText = `רמת בסיס כוילה ל: ${baselineLight}`;
-                    statusDiv.innerText = "הכיול הסתיים. מנתח נתונים...";
-                }, 3000);
-
-            } else {
-                // עצירת המדידה
-                isReadingData = false;
-                startBtn.innerText = "2. התחל כיול ומדידה";
-                statusDiv.innerText = "הקריאה הופסקה.";
-                statusDiv.style.color = "#666";
-                wordDisplay.innerText = "...";
-                baselineDisplay.innerText = "";
-            }
+        holistic.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentation: false,
+            refineFaceLandmarks: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
         });
 
+        holistic.onResults(onResults);
+
+        startCamBtn.addEventListener('click', () => {
+            startCamBtn.disabled = true;
+            statusDiv.innerText = "טוען מודל זיהוי...";
+            statusDiv.style.color = "white";
+            
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await holistic.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            camera.start();
+        });
+
+        function getCenter(landmarks) {
+            if (!landmarks || landmarks.length === 0) return null;
+            let sumX = 0, sumY = 0;
+            landmarks.forEach(lm => {
+                sumX += lm.x;
+                sumY += lm.y;
+            });
+            return { x: sumX / landmarks.length, y: sumY / landmarks.length };
+        }
+
+        function isHandTouchingFace(handLandmarks, faceCenter) {
+            if (!handLandmarks || !faceCenter) return false;
+            // בודקים אם קצה האצבע המורה או שורש כף היד קרובים למרכז הפנים
+            for (let i of [0, 8]) { // 0 = שורש כף יד, 8 = קצה אצבע מורה
+                let lm = handLandmarks[i];
+                let dist = Math.hypot(lm.x - faceCenter.x, lm.y - faceCenter.y);
+                if (dist < TOUCH_DISTANCE) return true;
+            }
+            return false;
+        }
+
+        function drawPLDPoints(landmarks, color = "white", size = 3) {
+            if (!landmarks) return;
+            canvasCtx.fillStyle = color;
+            landmarks.forEach(lm => {
+                // המרת קואורדינטות מנורמלות (0-1) לגודל הקנבס
+                const x = lm.x * canvasElement.width;
+                const y = lm.y * canvasElement.height;
+                canvasCtx.beginPath();
+                canvasCtx.arc(x, y, size, 0, 2 * Math.PI);
+                canvasCtx.fill();
+            });
+        }
+
+        function onResults(results) {
+            // ניקוי הקנבס (רקע שחור)
+            canvasCtx.fillStyle = 'black';
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // 1. ציור ה-PLD (נקודות בלבד)
+            // כדי לחסוך עומס ויזואלי ולשמור על מראה קלאסי של PLD, נצייר רק נקודות מפתח
+            drawPLDPoints(results.poseLandmarks, "white", 4); 
+            // אפשר להקטין את כמות נקודות הפנים אם רוצים PLD פחות צפוף, כרגע נצייר את כולן בקטן
+            drawPLDPoints(results.faceLandmarks, "rgba(255, 255, 255, 0.5)", 2);
+            drawPLDPoints(results.leftHandLandmarks, "white", 3);
+            drawPLDPoints(results.rightHandLandmarks, "white", 3);
+
+            // 2. לוגיקת זיהוי תנועה ומגע
+            let triggerS = false;
+            let currentFaceCenter = getCenter(results.faceLandmarks);
+
+            if (currentFaceCenter) {
+                // בדיקת תנועה (השוואה למיקום הקודם)
+                if (lastFaceCenter) {
+                    let moveDist = Math.hypot(currentFaceCenter.x - lastFaceCenter.x, currentFaceCenter.y - lastFaceCenter.y);
+                    if (moveDist > MOTION_THRESHOLD) {
+                        triggerS = true;
+                        statusDiv.innerText = "זיהוי: תנועת פנים!";
+                    }
+                }
+                lastFaceCenter = currentFaceCenter;
+
+                // בדיקת מגע ידיים
+                if (isHandTouchingFace(results.leftHandLandmarks, currentFaceCenter) || 
+                    isHandTouchingFace(results.rightHandLandmarks, currentFaceCenter)) {
+                    triggerS = true;
+                    statusDiv.innerText = "זיהוי: מגע בפנים!";
+                }
+            }
+
+            // 3. שליחה למיקרוביט
+            const now = Date.now();
+            if (triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
+                sendCommand('S');
+                lastSendTime = now;
+                statusDiv.style.color = "#FF9800"; // כתום בעת זיהוי
+                
+                setTimeout(() => {
+                    if (Date.now() - lastSendTime >= SEND_COOLDOWN) {
+                        statusDiv.innerText = "עוקב...";
+                        statusDiv.style.color = "white";
+                    }
+                }, 500);
+            } else if (!triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
+                // אם רוצים שברירת המחדל תכתוב משהו כשהכל שקט
+                if(statusDiv.innerText !== "עוקב..." && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!") {
+                    statusDiv.innerText = "עוקב...";
+                    statusDiv.style.color = "white";
+                }
+            }
+        }
     </script>
 </body>
 </html>
