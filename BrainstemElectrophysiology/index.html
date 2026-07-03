@@ -2,126 +2,110 @@
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD</title>
-    
+    <title>PLD - מעבדת מחקר תלת-ממדית</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
-
     <style>
         body { font-family: 'Segoe UI', sans-serif; text-align: center; background-color: #111; color: white; margin: 0; padding: 20px; }
-        button { font-size: 18px; padding: 12px 25px; margin: 10px; cursor: pointer; border: none; border-radius: 8px; background-color: #0078D7; color: white; }
-        #container { position: relative; margin: 10px auto; width: 800px; height: 450px; border: 2px solid #555; border-radius: 10px; overflow: hidden; background-color: black; }
-        video { display: none; }
+        button { font-size: 18px; padding: 12px 25px; margin: 10px; cursor: pointer; border-radius: 8px; border: none; background: #0078D7; color: white; }
+        #container { position: relative; margin: 20px auto; width: 800px; height: 450px; background: black; border: 2px solid #555; }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        #status { font-size: 20px; font-weight: bold; margin-top: 10px; }
-        #debug { color: #aaa; font-size: 14px; font-family: monospace; }
+        #status { font-size: 22px; font-weight: bold; margin-top: 10px; }
+        #debug { color: #555; font-size: 12px; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <h1>מעבדת PLD: לוגיקה מבוססת פרופורציות</h1>
+    <h1>מעבדת PLD: זיהוי הבעות ומגע תלת-ממדי</h1>
     <button id="connectBtn">1. התחבר למיקרוביט</button>
     <button id="startCamBtn">2. הפעל מצלמה</button>
-    <div id="status">ממתין...</div>
-    <div id="debug">FaceWidth: 0.00 | Ratio: 0.00</div>
+    <div id="status">ממתין להפעלה...</div>
+    <div id="debug">אין זיהוי פעיל</div>
 
     <div id="container">
-        <video id="input_video" autoplay playsinline></video>
+        <video id="input_video" autoplay playsinline style="display:none"></video>
         <canvas id="output_canvas" width="1280" height="720"></canvas>
     </div>
 
     <script>
-        // --- תקשורת מיקרוביט ---
         let writer;
-        async function sendCommand(cmd) { if (writer) await writer.write(cmd + '\r\n'); }
+        const statusDiv = document.getElementById('status');
+        const debugDiv = document.getElementById('debug');
+
+        // תקשורת מיקרוביט
         document.getElementById('connectBtn').onclick = async () => {
             const port = await navigator.serial.requestPort();
             await port.open({ baudRate: 115200 });
-            writer = new TextEncoderStream().readable.pipeTo(port.writable) && new TextEncoderStream().writable.getWriter();
-            document.getElementById('status').innerText = "מחובר!";
+            writer = new TextEncoderStream().writable.getWriter();
+            statusDiv.innerText = "מחובר למיקרוביט";
         };
 
-        // --- לוגיקת MediaPipe ---
-        const videoElement = document.getElementById('input_video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const debug = document.getElementById('debug');
-        
-        let lastMouthDist = null;
-        let lastLeftEyeDist = null;
-        let lastRightEyeDist = null;
-
+        const canvasCtx = document.getElementById('output_canvas').getContext('2d');
         const holistic = new Holistic({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`});
+        
         holistic.onResults(onResults);
-
         document.getElementById('startCamBtn').onclick = () => {
-            new Camera(videoElement, { onFrame: () => holistic.send({image: videoElement}), width: 1280, height: 720 }).start();
+            new Camera(document.getElementById('input_video'), {
+                onFrame: () => holistic.send({image: document.getElementById('input_video')}),
+                width: 1280, height: 720
+            }).start();
         };
 
-        function getDistance(lm1, lm2) { return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y); }
+        function drawPoints(lms, color, size) {
+            if(!lms) return;
+            canvasCtx.fillStyle = color;
+            lms.forEach(lm => {
+                canvasCtx.beginPath();
+                canvasCtx.arc(lm.x * 1280, lm.y * 720, size, 0, Math.PI*2);
+                canvasCtx.fill();
+            });
+        }
 
         function onResults(results) {
             canvasCtx.fillStyle = 'black';
             canvasCtx.fillRect(0, 0, 1280, 720);
-            
-            // ציור נקודות
-            [results.poseLandmarks, results.faceLandmarks, results.leftHandLandmarks, results.rightHandLandmarks].forEach(lms => {
-                if(lms) lms.forEach(lm => {
-                    canvasCtx.fillStyle = "white";
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(lm.x * 1280, lm.y * 720, 2, 0, Math.PI*2);
-                    canvasCtx.fill();
-                });
-            });
+
+            // צביעה נפרדת
+            drawPoints(results.poseLandmarks, "#FF00FF", 3); // גוף - מג'נטה
+            drawPoints(results.faceLandmarks, "#00FFFF", 1.5); // פנים - טורקיז
+            drawPoints(results.leftHandLandmarks, "#FFFF00", 2); // ידיים - צהוב
+            drawPoints(results.rightHandLandmarks, "#FFFF00", 2);
 
             if (results.faceLandmarks && results.poseLandmarks) {
-                // 1. קביעת קנה המידה (רוחב פנים מנורמל)
-                const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
-                if (faceWidth < 0.02) return; // הגנה - פנים קטנות מדי לא אמינות
-
-                // 2. חישוב תנועת הבעות יחסי לרוחב הפנים
-                const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
-                const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
+                const faceWidth = Math.hypot(results.faceLandmarks[33].x - results.faceLandmarks[263].x, results.faceLandmarks[33].y - results.faceLandmarks[263].y);
+                const shoulderWidth = Math.hypot(results.poseLandmarks[11].x - results.poseLandmarks[12].x, results.poseLandmarks[11].y - results.poseLandmarks[12].y);
                 
-                // ה-Threshold הוא 5% מרוחב הפנים. זה נשאר קבוע יחסית לעצמו!
-                const threshold = faceWidth * 0.05; 
-
-                if (lastMouthDist !== null) {
-                    if (Math.abs(mouthDist - lastMouthDist) > threshold || 
-                        Math.abs(leftEyeDist - lastLeftEyeDist) > threshold) {
-                        sendCommand('S');
-                        document.getElementById('status').innerText = "זיהוי הבעה!";
-                    }
-                }
-                lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist;
-
-                // 3. זיהוי מגע יחסי (בלי תלות ב-Z)
-                const faceCenter = {
-                    x: results.faceLandmarks[1].x, // נקודת אף
-                    y: results.faceLandmarks[1].y
-                };
+                // --- 1. הבעות פנים ---
+                const mouthDist = Math.hypot(results.faceLandmarks[13].x - results.faceLandmarks[14].x, results.faceLandmarks[13].y - results.faceLandmarks[14].y);
+                const threshold = faceWidth * 0.06; // רגישות מנורמלת
                 
-                let isTouching = false;
+                let isTriggered = false;
+                
+                // --- 2. מגע תלת-ממדי (XY + Z) ---
+                const faceNose = results.faceLandmarks[1];
                 [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
                     if(hand) {
-                        // בדיקת 4 קצות אצבעות
-                        [8, 12, 16, 20].forEach(idx => {
-                            // המרחק מחולק ברוחב הפנים - הופך למספר חסר יחידות
-                            const relativeDist = getDistance(hand[idx], faceCenter) / faceWidth;
-                            if (relativeDist < 1.5) { // 1.5 זה קבוע גיאומטרי - לא משתנה עם המרחק
-                                isTouching = true;
-                            }
-                        });
+                        const wrist = hand[0];
+                        const distXY = Math.hypot(wrist.x - faceNose.x, wrist.y - faceNose.y) / faceWidth;
+                        const distZ = Math.abs(wrist.z - faceNose.z) / shoulderWidth;
+
+                        // תנאי מגע: קרוב במישור ה-XY וקרוב בעומק ה-Z
+                        if (distXY < 1.2 && distZ < 0.4) {
+                            isTriggered = true;
+                            statusDiv.innerText = "מגע מזוהה!";
+                            statusDiv.style.color = "#FF9800";
+                            debugDiv.innerText = `Touch detected: XY=${distXY.toFixed(2)} Z=${distZ.toFixed(2)}`;
+                        }
                     }
                 });
 
-                if (isTouching) {
-                    sendCommand('S');
-                    document.getElementById('status').innerText = "מגע מזוהה!";
+                if (isTriggered) {
+                    if(writer) writer.write('S\r\n');
+                } else {
+                    statusDiv.innerText = "אין זיהוי פעיל";
+                    statusDiv.style.color = "white";
+                    debugDiv.innerText = "Scanning...";
                 }
-
-                debug.innerText = `FaceWidth: ${faceWidth.toFixed(3)} | Threshold: ${threshold.toFixed(4)}`;
             }
         }
     </script>
