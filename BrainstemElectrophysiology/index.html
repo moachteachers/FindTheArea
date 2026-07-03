@@ -132,7 +132,7 @@
         // רגישות וסף המגע
         const EXPRESSION_THRESHOLD = 0.005; 
         const TOUCH_MULTIPLIER = 1.2; // רדיוס המגע על המסך (דו-ממד)
-        const DEPTH_MULTIPLIER = 1.0; // סבולת העומק: כמה היד יכולה להיות "רחוקה" מהפנים בציר העומק כדי להיחשב מגע
+        const DEPTH_MULTIPLIER = 1.6; // סבולת העומק: כמה היד יכולה להיות "רחוקה" מהפנים בציר העומק כדי להיחשב מגע
 
         const holistic = new Holistic({locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
