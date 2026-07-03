@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PLD - זיהוי תנועת פנים</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            background-color: #222;
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+        button {
+            font-size: 18px;
+            padding: 12px 25px;
+            margin: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 8px;
+            background-color: #0078D7;
+            color: white;
+            transition: 0.3s;
+        }
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+            color: #888;
+        }
+        button:hover:not(:disabled) {
+            background-color: #005a9e;
+        }
+        #container {
+            position: relative;
+            margin: 20px auto;
+            width: 640px;
+            height: 480px;
+            border: 2px solid #555;
+            border-radius: 10px;
+            overflow: hidden;
+            background-color: black;
+        }
+        video {
+            display: none; /* מסתירים את הוידאו כדי לראות רק את ה-PLD */
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #status {
+            font-size: 20px;
+            margin-top: 15px;
+            min-height: 30px;
+            font-weight: bold;
+        }
+        .controls {
+            background-color: #333;
+            padding: 15px;
+            border-radius: 10px;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>מעבדת PLD: תנועה ומגע בפנים</h1>
+    
+    <div class="controls">
+        <button id="connectBtn">1. התחבר למיקרוביט</button>
+        <button id="startCamBtn">2. הפעל מצלמה (PLD)</button>
+    </div>
+
+    <div id="status">ממתין לפעולה...</div>
+
+    <div id="container">
+        <video id="input_video" autoplay playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+        // -- הגדרות מיקרוביט --
+        let port;
+        let writer;
+        const connectBtn = document.getElementById('connectBtn');
+        const statusDiv = document.getElementById('status');
+
+        connectBtn.addEventListener('click', async () => {
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+                const textEncoder = new TextEncoderStream();
+                textEncoder.readable.pipeTo(port.writable);
+                writer = textEncoder.writable.getWriter();
+                statusDiv.innerText = "מחובר למיקרוביט בהצלחה!";
+                statusDiv.style.color = "#4CAF50";
+            } catch (error) {
+                console.error(error);
+                statusDiv.innerText = "שגיאת התחברות למיקרוביט.";
+                statusDiv.style.color = "#F44336";
+            }
+        });
+
+        async function sendCommand(cmd) {
+            if (writer) {
+                await writer.write(cmd + '\r\n');
+            }
+        }
+
+        // -- הגדרות MediaPipe ו-PLD --
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const startCamBtn = document.getElementById('startCamBtn');
+
+        let lastFaceCenter = null;
+        let lastSendTime = 0;
+        const SEND_COOLDOWN = 300; // מינימום 300 מילישניות בין שליחות רצופות של S
+        const MOTION_THRESHOLD = 0.03; // רגישות תנועת הפנים (ערכים מנורמלים 0-1)
+        const TOUCH_DISTANCE = 0.15; // מרחק בין היד לפנים שייחשב כמגע
+
+        // אתחול מודל Holistic
+        const holistic = new Holistic({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
+        }});
+
+        holistic.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentation: false,
+            refineFaceLandmarks: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        holistic.onResults(onResults);
+
+        startCamBtn.addEventListener('click', () => {
+            startCamBtn.disabled = true;
+            statusDiv.innerText = "טוען מודל זיהוי...";
+            statusDiv.style.color = "white";
+            
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await holistic.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            camera.start();
+        });
+
+        function getCenter(landmarks) {
+            if (!landmarks || landmarks.length === 0) return null;
+            let sumX = 0, sumY = 0;
+            landmarks.forEach(lm => {
+                sumX += lm.x;
+                sumY += lm.y;
+            });
+            return { x: sumX / landmarks.length, y: sumY / landmarks.length };
+        }
+
+        function isHandTouchingFace(handLandmarks, faceCenter) {
+            if (!handLandmarks || !faceCenter) return false;
+            // בודקים אם קצה האצבע המורה או שורש כף היד קרובים למרכז הפנים
+            for (let i of [0, 8]) { // 0 = שורש כף יד, 8 = קצה אצבע מורה
+                let lm = handLandmarks[i];
+                let dist = Math.hypot(lm.x - faceCenter.x, lm.y - faceCenter.y);
+                if (dist < TOUCH_DISTANCE) return true;
+            }
+            return false;
+        }
+
+        function drawPLDPoints(landmarks, color = "white", size = 3) {
+            if (!landmarks) return;
+            canvasCtx.fillStyle = color;
+            landmarks.forEach(lm => {
+                // המרת קואורדינטות מנורמלות (0-1) לגודל הקנבס
+                const x = lm.x * canvasElement.width;
+                const y = lm.y * canvasElement.height;
+                canvasCtx.beginPath();
+                canvasCtx.arc(x, y, size, 0, 2 * Math.PI);
+                canvasCtx.fill();
+            });
+        }
+
+        function onResults(results) {
+            // ניקוי הקנבס (רקע שחור)
+            canvasCtx.fillStyle = 'black';
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // 1. ציור ה-PLD (נקודות בלבד)
+            // כדי לחסוך עומס ויזואלי ולשמור על מראה קלאסי של PLD, נצייר רק נקודות מפתח
+            drawPLDPoints(results.poseLandmarks, "white", 4); 
+            // אפשר להקטין את כמות נקודות הפנים אם רוצים PLD פחות צפוף, כרגע נצייר את כולן בקטן
+            drawPLDPoints(results.faceLandmarks, "rgba(255, 255, 255, 0.5)", 2);
+            drawPLDPoints(results.leftHandLandmarks, "white", 3);
+            drawPLDPoints(results.rightHandLandmarks, "white", 3);
+
+            // 2. לוגיקת זיהוי תנועה ומגע
+            let triggerS = false;
+            let currentFaceCenter = getCenter(results.faceLandmarks);
+
+            if (currentFaceCenter) {
+                // בדיקת תנועה (השוואה למיקום הקודם)
+                if (lastFaceCenter) {
+                    let moveDist = Math.hypot(currentFaceCenter.x - lastFaceCenter.x, currentFaceCenter.y - lastFaceCenter.y);
+                    if (moveDist > MOTION_THRESHOLD) {
+                        triggerS = true;
+                        statusDiv.innerText = "זיהוי: תנועת פנים!";
+                    }
+                }
+                lastFaceCenter = currentFaceCenter;
+
+                // בדיקת מגע ידיים
+                if (isHandTouchingFace(results.leftHandLandmarks, currentFaceCenter) || 
+                    isHandTouchingFace(results.rightHandLandmarks, currentFaceCenter)) {
+                    triggerS = true;
+                    statusDiv.innerText = "זיהוי: מגע בפנים!";
+                }
+            }
+
+            // 3. שליחה למיקרוביט
+            const now = Date.now();
+            if (triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
+                sendCommand('S');
+                lastSendTime = now;
+                statusDiv.style.color = "#FF9800"; // כתום בעת זיהוי
+                
+                setTimeout(() => {
+                    if (Date.now() - lastSendTime >= SEND_COOLDOWN) {
+                        statusDiv.innerText = "עוקב...";
+                        statusDiv.style.color = "white";
+                    }
+                }, 500);
+            } else if (!triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
+                // אם רוצים שברירת המחדל תכתוב משהו כשהכל שקט
+                if(statusDiv.innerText !== "עוקב..." && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!") {
+                    statusDiv.innerText = "עוקב...";
+                    statusDiv.style.color = "white";
+                }
+            }
+        }
+    </script>
+</body>
+</html>
