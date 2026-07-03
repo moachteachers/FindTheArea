@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - הבעות פנים וזיהוי מגע תלת-ממדי</title>
+    <title>PLD - מגע פנים מבוסס פרספקטיבה</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -69,11 +69,17 @@
             display: inline-block;
             margin-bottom: 20px;
         }
+        #debug {
+            color: #aaa;
+            font-size: 14px;
+            margin-top: 10px;
+            font-family: monospace;
+        }
     </style>
 </head>
 <body>
 
-    <h1>מעבדת PLD: הבעות פנים ומגע עומק (3D)</h1>
+    <h1>מעבדת PLD: זיהוי עומק מבוסס פרופורציה</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
@@ -81,6 +87,7 @@
     </div>
 
     <div id="status">ממתין לפעולה...</div>
+    <div id="debug">פרופורציית יד/פנים: ---</div>
 
     <div id="container">
         <video id="input_video" autoplay playsinline></video>
@@ -93,6 +100,7 @@
         let writer;
         const connectBtn = document.getElementById('connectBtn');
         const statusDiv = document.getElementById('status');
+        const debugDiv = document.getElementById('debug');
 
         connectBtn.addEventListener('click', async () => {
             try {
@@ -116,7 +124,7 @@
             }
         }
 
-        // -- הגדרות MediaPipe ו-PLD --
+        // -- הגדרות MediaPipe --
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
@@ -125,14 +133,16 @@
         let lastMouthDist = null;
         let lastLeftEyeDist = null;
         let lastRightEyeDist = null;
-        
         let lastSendTime = 0;
         const SEND_COOLDOWN = 300; 
 
-        // רגישות וסף המגע
+        // פרמטרים לבקרה
         const EXPRESSION_THRESHOLD = 0.005; 
-        const TOUCH_MULTIPLIER = 1.2; // רדיוס המגע על המסך (דו-ממד)
-        const DEPTH_MULTIPLIER = 1.6; // סבולת העומק: כמה היד יכולה להיות "רחוקה" מהפנים בציר העומק כדי להיחשב מגע
+        const TOUCH_MULTIPLIER = 1.2; // הרדיוס הדו-ממדי מסביב לפנים שבו נבדק המגע
+        
+        // הפרמטר החדש והחשוב: יחס הגודל המקסימלי בין היד לפנים.
+        // אם היחס גדול מזה, המשמעות היא שהיד קרובה למצלמה בגלל פרספקטיבה!
+        const MAX_HAND_FACE_RATIO = 1.8; 
 
         const holistic = new Holistic({locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
@@ -165,43 +175,57 @@
             camera.start();
         });
 
+        // חישוב מרחק בסיסי ב-XY
         function getDistance(lm1, lm2) {
             if (!lm1 || !lm2) return 0;
             return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
         }
 
-        // פונקציה חדשה שבודקת מגע ב-3D באמצעות מודל הגוף
-        function isHandTouchingFace3D(poseLandmarks, faceWidth) {
-            if (!poseLandmarks) return false;
+        function getCenter(landmarks) {
+            if (!landmarks || landmarks.length === 0) return null;
+            let sumX = 0, sumY = 0;
+            landmarks.forEach(lm => {
+                sumX += lm.x;
+                sumY += lm.y;
+            });
+            return { x: sumX / landmarks.length, y: sumY / landmarks.length };
+        }
 
-            // ניקח את האף (נקודה 0) בתור המרכז התלת-ממדי של הפנים
-            const nose = poseLandmarks[0];
-            if (!nose) return false;
+        // הפונקציה החדשה שמבססת מגע על חפיפה גיאומטרית + פרופורציית פרספקטיבה
+        function isHandTouchingFace(handLandmarks, faceCenter, faceWidth) {
+            if (!handLandmarks || !faceCenter || !faceWidth) return false;
 
-            const xyThreshold = faceWidth * TOUCH_MULTIPLIER; // סף לרוחב/גובה
-            const zThreshold = faceWidth * DEPTH_MULTIPLIER;  // סף לעומק (המרחק אל המצלמה)
-
-            // הנקודות שאותן נבדוק מול הפנים: 
-            // 15: שורש כף יד שמאל, 19: אצבע מורה שמאל
-            // 16: שורש כף יד ימין, 20: אצבע מורה ימין
-            const handPoints = [15, 19, 16, 20]; 
-            
-            for (let i of handPoints) {
-                let handPart = poseLandmarks[i];
-                if (!handPart) continue;
-
-                // בדיקת המרחק הדו-ממדי (X ו-Y)
-                let xyDist = Math.hypot(handPart.x - nose.x, handPart.y - nose.y);
-                
-                // בדיקת המרחק בעומק (Z)
-                let zDist = Math.abs(handPart.z - nose.z);
-
-                // רק אם היד קרובה לפנים גם ב-XY וגם נמצאת קרוב אליהן בציר ה-Z, נחשיב את זה כמגע
-                if (xyDist < xyThreshold && zDist < zThreshold) {
-                    return true;
+            // 1. קודם נוודא שהיד בכלל מסתירה את הפנים בדו-ממד (X,Y)
+            let isOverlapping = false;
+            // נבדוק את קצות האצבעות (8=מורה, 12=אמצעית, 16=קמיצה, 20=זרת)
+            for (let i of [8, 12, 16, 20]) { 
+                let dist = getDistance(handLandmarks[i], faceCenter);
+                if (dist < faceWidth * TOUCH_MULTIPLIER) {
+                    isOverlapping = true;
+                    break;
                 }
             }
-            return false;
+
+            if (!isOverlapping) return false;
+
+            // 2. מבחן העומק דרך פרספקטיבה:
+            // נמדוד את אורך היד: משורש כף היד (0) ועד בסיס האצבע האמצעית (9)
+            let handSize = getDistance(handLandmarks[0], handLandmarks[9]);
+            
+            // חישוב היחס
+            let ratio = handSize / faceWidth;
+            
+            // הצגת היחס במסך לצורכי דיבאג (יראה את היחס של היד האחרונה שנבדקה)
+            debugDiv.innerText = `פרופורציית יד/פנים (קרוב מדי > ${MAX_HAND_FACE_RATIO}): ${ratio.toFixed(2)}`;
+
+            // אם הפרופורציה חורגת, היד מרחפת מול המצלמה!
+            if (ratio > MAX_HAND_FACE_RATIO) {
+                debugDiv.style.color = "red";
+                return false; // מתעלמים מהמגע
+            }
+
+            debugDiv.style.color = "green";
+            return true; // גם חופף וגם בפרופורציה הנכונה - זה מגע אמיתי
         }
 
         function drawPLDPoints(landmarks, color = "white", size = 3) {
@@ -228,9 +252,8 @@
             let triggerS = false;
             let eventText = "";
 
-            if (results.faceLandmarks && results.poseLandmarks) {
-                
-                // --- 1. זיהוי הבעות פנים ---
+            if (results.faceLandmarks) {
+                // הבעות פנים
                 const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                 const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
                 const rightEyeDist = getDistance(results.faceLandmarks[386], results.faceLandmarks[374]);
@@ -251,19 +274,20 @@
                 lastLeftEyeDist = leftEyeDist;
                 lastRightEyeDist = rightEyeDist;
 
-                // --- 2. זיהוי מגע תלת-ממדי ---
-                // חישוב רוחב הפנים עבור קנה המידה הדינמי
-                const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
-                
-                if (!triggerS) { // בודקים מגע רק אם לא הייתה קפיצה של הבעות הפנים
-                    if (isHandTouchingFace3D(results.poseLandmarks, faceWidth)) {
+                // חישוב המגע עם טריק הפרספקטיבה
+                let currentFaceCenter = getCenter(results.faceLandmarks);
+                const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]); // מרחק בין העיניים החיצוניות
+
+                if (!triggerS) { 
+                    if (isHandTouchingFace(results.leftHandLandmarks, currentFaceCenter, faceWidth) ||
+                        isHandTouchingFace(results.rightHandLandmarks, currentFaceCenter, faceWidth)) {
                         triggerS = true;
                         eventText = "מגע בפנים!";
                     }
                 }
             }
 
-            // שליחה למיקרוביט והצגה על המסך
+            // עדכון הממשק והמיקרוביט
             const now = Date.now();
             if (triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S');
