@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - מגע פנים מבוסס פרספקטיבה</title>
+    <title>PLD - מעבדה</title>
     
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
 
     <style>
         body {
@@ -28,64 +28,29 @@
             color: white;
             transition: 0.3s;
         }
-        button:disabled {
-            background-color: #555;
-            cursor: not-allowed;
-            color: #888;
-        }
-        button:hover:not(:disabled) {
-            background-color: #005a9e;
-        }
+        button:disabled { background-color: #555; cursor: not-allowed; color: #888; }
         #container {
-            position: relative;
-            margin: 20px auto;
-            width: 640px;
-            height: 480px;
-            border: 2px solid #555;
-            border-radius: 10px;
-            overflow: hidden;
-            background-color: black;
+            position: relative; margin: 20px auto; width: 640px; height: 480px;
+            border: 2px solid #555; border-radius: 10px; overflow: hidden; background-color: black;
         }
-        video {
-            display: none; 
-        }
-        canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-        #status {
-            font-size: 20px;
-            margin-top: 15px;
-            min-height: 30px;
-            font-weight: bold;
-        }
-        .controls {
-            background-color: #333;
-            padding: 15px;
-            border-radius: 10px;
-            display: inline-block;
-            margin-bottom: 20px;
-        }
-        #debug {
-            color: #aaa;
-            font-size: 14px;
-            margin-top: 10px;
-            font-family: monospace;
-        }
+        video { display: none; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #status { font-size: 20px; margin-top: 15px; min-height: 30px; font-weight: bold; }
+        #systemCheck { color: #ffeb3b; margin-top: 10px; font-weight: bold; font-size: 16px;}
+        .controls { background-color: #333; padding: 15px; border-radius: 10px; display: inline-block; margin-bottom: 20px; }
+        #debug { color: #aaa; font-size: 14px; margin-top: 10px; font-family: monospace; }
     </style>
 </head>
 <body>
 
-    <h1>מעבדת PLD: זיהוי עומק מבוסס פרופורציה</h1>
+    <h1>מעבדת PLD</h1>
     
     <div class="controls">
-        <button id="connectBtn">1. התחבר למיקרוביט</button>
-        <button id="startCamBtn">2. הפעל מצלמה (PLD)</button>
+        <button id="connectBtn" disabled>1. התחבר למיקרוביט</button>
+        <button id="startCamBtn" disabled>2. הפעל מצלמה</button>
     </div>
 
+    <div id="systemCheck">מבצע בדיקת מערכת לשרת ה-Deploy...</div>
     <div id="status">ממתין לפעולה...</div>
     <div id="debug">פרופורציית יד/פנים: ---</div>
 
@@ -95,7 +60,33 @@
     </div>
 
     <script>
-        // -- הגדרות מיקרוביט --
+        // --- 1. בדיקת סביבת ה-Deploy (מנגנון חדש) ---
+        window.onload = () => {
+            const systemCheck = document.getElementById('systemCheck');
+            const connectBtn = document.getElementById('connectBtn');
+            const startCamBtn = document.getElementById('startCamBtn');
+            
+            let isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            
+            if (!isSecure) {
+                systemCheck.innerHTML = "❌ שגיאת Deploy: האתר לא מאובטח (HTTP). המצלמה והמיקרוביט לא יעבדו.";
+                systemCheck.style.color = "red";
+                return;
+            }
+            
+            if (!navigator.serial) {
+                systemCheck.innerHTML = "❌ שגיאה: הדפדפן או השרת חוסמים את ה-Web Serial API.";
+                systemCheck.style.color = "red";
+                return;
+            }
+
+            systemCheck.innerHTML = "✅ סביבת השרת תקינה. כל המערכות מוכנות.";
+            systemCheck.style.color = "#4CAF50";
+            connectBtn.disabled = false;
+            startCamBtn.disabled = false;
+        };
+
+        // --- 2. לוגיקת המיקרוביט ---
         let port;
         let writer;
         const connectBtn = document.getElementById('connectBtn');
@@ -112,50 +103,33 @@
                 statusDiv.innerText = "מחובר למיקרוביט בהצלחה!";
                 statusDiv.style.color = "#4CAF50";
             } catch (error) {
-                console.error(error);
-                statusDiv.innerText = "שגיאת התחברות למיקרוביט.";
+                statusDiv.innerText = "שגיאת התחברות: " + error.message;
                 statusDiv.style.color = "#F44336";
             }
         });
 
         async function sendCommand(cmd) {
-            if (writer) {
-                await writer.write(cmd + '\r\n');
-            }
+            if (writer) await writer.write(cmd + '\r\n');
         }
 
-        // -- הגדרות MediaPipe --
+        // --- 3. לוגיקת MediaPipe ---
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
         const startCamBtn = document.getElementById('startCamBtn');
 
-        let lastMouthDist = null;
-        let lastLeftEyeDist = null;
-        let lastRightEyeDist = null;
+        let lastMouthDist = null, lastLeftEyeDist = null, lastRightEyeDist = null;
         let lastSendTime = 0;
-        const SEND_COOLDOWN = 300; 
-
-        // פרמטרים לבקרה
-        const EXPRESSION_THRESHOLD = 0.005; 
-        const TOUCH_MULTIPLIER = 1.2; // הרדיוס הדו-ממדי מסביב לפנים שבו נבדק המגע
-        
-        // הפרמטר החדש והחשוב: יחס הגודל המקסימלי בין היד לפנים.
-        // אם היחס גדול מזה, המשמעות היא שהיד קרובה למצלמה בגלל פרספקטיבה!
-        const MAX_HAND_FACE_RATIO = 1.8; 
+        const SEND_COOLDOWN = 300, EXPRESSION_THRESHOLD = 0.005, TOUCH_MULTIPLIER = 1.2, MAX_HAND_FACE_RATIO = 1.8; 
 
         const holistic = new Holistic({locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
         }});
 
         holistic.setOptions({
-            modelComplexity: 1,
-            smoothLandmarks: true,
-            enableSegmentation: false,
-            smoothSegmentation: false,
-            refineFaceLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
+            modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false,
+            smoothSegmentation: false, refineFaceLandmarks: true,
+            minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
         });
 
         holistic.onResults(onResults);
@@ -166,16 +140,15 @@
             statusDiv.style.color = "white";
             
             const camera = new Camera(videoElement, {
-                onFrame: async () => {
-                    await holistic.send({image: videoElement});
-                },
-                width: 640,
-                height: 480
+                onFrame: async () => { await holistic.send({image: videoElement}); },
+                width: 640, height: 480
             });
-            camera.start();
+            camera.start().catch(err => {
+                statusDiv.innerText = "שגיאת מצלמה: " + err.message;
+                statusDiv.style.color = "red";
+            });
         });
 
-        // חישוב מרחק בסיסי ב-XY
         function getDistance(lm1, lm2) {
             if (!lm1 || !lm2) return 0;
             return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
@@ -184,58 +157,36 @@
         function getCenter(landmarks) {
             if (!landmarks || landmarks.length === 0) return null;
             let sumX = 0, sumY = 0;
-            landmarks.forEach(lm => {
-                sumX += lm.x;
-                sumY += lm.y;
-            });
+            landmarks.forEach(lm => { sumX += lm.x; sumY += lm.y; });
             return { x: sumX / landmarks.length, y: sumY / landmarks.length };
         }
 
-        // הפונקציה החדשה שמבססת מגע על חפיפה גיאומטרית + פרופורציית פרספקטיבה
         function isHandTouchingFace(handLandmarks, faceCenter, faceWidth) {
             if (!handLandmarks || !faceCenter || !faceWidth) return false;
 
-            // 1. קודם נוודא שהיד בכלל מסתירה את הפנים בדו-ממד (X,Y)
             let isOverlapping = false;
-            // נבדוק את קצות האצבעות (8=מורה, 12=אמצעית, 16=קמיצה, 20=זרת)
             for (let i of [8, 12, 16, 20]) { 
                 let dist = getDistance(handLandmarks[i], faceCenter);
-                if (dist < faceWidth * TOUCH_MULTIPLIER) {
-                    isOverlapping = true;
-                    break;
-                }
+                if (dist < faceWidth * TOUCH_MULTIPLIER) { isOverlapping = true; break; }
             }
-
             if (!isOverlapping) return false;
 
-            // 2. מבחן העומק דרך פרספקטיבה:
-            // נמדוד את אורך היד: משורש כף היד (0) ועד בסיס האצבע האמצעית (9)
             let handSize = getDistance(handLandmarks[0], handLandmarks[9]);
+            if (handSize === 0) return false; // מניעת שגיאת חילוק באפס
             
-            // חישוב היחס
             let ratio = handSize / faceWidth;
-            
-            // הצגת היחס במסך לצורכי דיבאג (יראה את היחס של היד האחרונה שנבדקה)
             debugDiv.innerText = `פרופורציית יד/פנים (קרוב מדי > ${MAX_HAND_FACE_RATIO}): ${ratio.toFixed(2)}`;
 
-            // אם הפרופורציה חורגת, היד מרחפת מול המצלמה!
-            if (ratio > MAX_HAND_FACE_RATIO) {
-                debugDiv.style.color = "red";
-                return false; // מתעלמים מהמגע
-            }
-
-            debugDiv.style.color = "green";
-            return true; // גם חופף וגם בפרופורציה הנכונה - זה מגע אמיתי
+            if (ratio > MAX_HAND_FACE_RATIO) { debugDiv.style.color = "red"; return false; }
+            debugDiv.style.color = "green"; return true; 
         }
 
         function drawPLDPoints(landmarks, color = "white", size = 3) {
             if (!landmarks) return;
             canvasCtx.fillStyle = color;
             landmarks.forEach(lm => {
-                const x = lm.x * canvasElement.width;
-                const y = lm.y * canvasElement.height;
                 canvasCtx.beginPath();
-                canvasCtx.arc(x, y, size, 0, 2 * Math.PI);
+                canvasCtx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, size, 0, 2 * Math.PI);
                 canvasCtx.fill();
             });
         }
@@ -249,62 +200,40 @@
             drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3);
             drawPLDPoints(results.rightHandLandmarks, "#FFFF00", 3);
 
-            let triggerS = false;
-            let eventText = "";
+            let triggerS = false, eventText = "";
 
             if (results.faceLandmarks) {
-                // הבעות פנים
                 const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                 const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
                 const rightEyeDist = getDistance(results.faceLandmarks[386], results.faceLandmarks[374]);
 
                 if (lastMouthDist !== null) {
-                    if (Math.abs(mouthDist - lastMouthDist) > EXPRESSION_THRESHOLD) {
-                        triggerS = true;
-                        eventText = "תנועת פה!";
-                    }
+                    if (Math.abs(mouthDist - lastMouthDist) > EXPRESSION_THRESHOLD) { triggerS = true; eventText = "תנועת פה!"; }
                     else if (Math.abs(leftEyeDist - lastLeftEyeDist) > EXPRESSION_THRESHOLD || 
-                             Math.abs(rightEyeDist - lastRightEyeDist) > EXPRESSION_THRESHOLD) {
-                        triggerS = true;
-                        eventText = "תנועת עיניים!";
-                    }
+                             Math.abs(rightEyeDist - lastRightEyeDist) > EXPRESSION_THRESHOLD) { triggerS = true; eventText = "תנועת עיניים!"; }
                 }
 
-                lastMouthDist = mouthDist;
-                lastLeftEyeDist = leftEyeDist;
-                lastRightEyeDist = rightEyeDist;
+                lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist; lastRightEyeDist = rightEyeDist;
 
-                // חישוב המגע עם טריק הפרספקטיבה
                 let currentFaceCenter = getCenter(results.faceLandmarks);
-                const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]); // מרחק בין העיניים החיצוניות
+                const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]); 
 
-                if (!triggerS) { 
+                if (!triggerS && faceWidth > 0) { 
                     if (isHandTouchingFace(results.leftHandLandmarks, currentFaceCenter, faceWidth) ||
                         isHandTouchingFace(results.rightHandLandmarks, currentFaceCenter, faceWidth)) {
-                        triggerS = true;
-                        eventText = "מגע בפנים!";
+                        triggerS = true; eventText = "מגע בפנים!";
                     }
                 }
             }
 
-            // עדכון הממשק והמיקרוביט
             const now = Date.now();
             if (triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
-                sendCommand('S');
-                lastSendTime = now;
-                statusDiv.innerText = `זיהוי: ${eventText}`;
-                statusDiv.style.color = "#FF9800";
-                
-                setTimeout(() => {
-                    if (Date.now() - lastSendTime >= SEND_COOLDOWN) {
-                        statusDiv.innerText = "עוקב...";
-                        statusDiv.style.color = "white";
-                    }
-                }, 500);
+                sendCommand('S'); lastSendTime = now;
+                statusDiv.innerText = `זיהוי: ${eventText}`; statusDiv.style.color = "#FF9800";
+                setTimeout(() => { if (Date.now() - lastSendTime >= SEND_COOLDOWN) { statusDiv.innerText = "עוקב..."; statusDiv.style.color = "white"; } }, 500);
             } else if (!triggerS && (now - lastSendTime > SEND_COOLDOWN)) {
                 if(statusDiv.innerText !== "עוקב..." && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!" && !statusDiv.innerText.includes("טוען")) {
-                    statusDiv.innerText = "עוקב...";
-                    statusDiv.style.color = "white";
+                    statusDiv.innerText = "עוקב..."; statusDiv.style.color = "white";
                 }
             }
         }
