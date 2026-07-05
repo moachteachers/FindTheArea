@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - מעבדת מחקר תלת-ממדית</title>
+    <title>PLD - מעבדת מחקר תנועה ומגע</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -77,7 +77,7 @@
     </div>
 
     <script>
-        // --- תקשורת מיקרוביט ---
+        // --- תקשורת למיקרוביט ---
         let port, writer;
         const connectBtn = document.getElementById('connectBtn');
         const statusDiv = document.getElementById('status');
@@ -156,6 +156,7 @@
             canvasCtx.fillStyle = 'black';
             canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
+            // שמירה על עיצוב מדעי נקי (ללא אפקטים, רק נקודות ממופות)
             drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); 
             drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2); 
             drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3); 
@@ -164,9 +165,8 @@
             let isTriggered = false;
             let currentEventText = "";
 
-            if (results.faceLandmarks && results.poseLandmarks) {
+            if (results.faceLandmarks) {
                 const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
-                const shoulderWidth = getDistance(results.poseLandmarks[11], results.poseLandmarks[12]);
                 
                 if (faceWidth > 0.02) { 
                     
@@ -185,51 +185,42 @@
                     }
                     lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist;
 
-                    // --- 2. מגע תלת-ממדי (הלוגיקה המתוקנת) ---
-                    if (!isTriggered && shoulderWidth > 0.05) { 
-                        const noseFace = results.faceLandmarks[1]; // למישור המסך
-                        const nosePose = results.poseLandmarks[0]; // לציר העומק (Z) בלבד
+                    // --- 2. מגע בפנים (ללא תלות בכתפיים או במודל הגוף) ---
+                    if (!isTriggered) { 
+                        const nose = results.faceLandmarks[1];
+                        const hands = [results.leftHandLandmarks, results.rightHandLandmarks];
 
-                        // בדיקת יד שמאל
-                        if (results.leftHandLandmarks && results.poseLandmarks[15]) {
-                            let isOverlapping = false;
-                            for (let i of [8, 12, 16, 20]) { // קצות האצבעות
-                                if (getDistance(results.leftHandLandmarks[i], noseFace) / faceWidth < 1.5) {
-                                    isOverlapping = true; break;
-                                }
-                            }
-                            // התיקון הקריטי: חישוב Z מתבצע רק בתוך מערכת הצירים של הגוף
-                            const distZLeft = Math.abs(results.poseLandmarks[15].z - nosePose.z) / shoulderWidth;
-                            
-                            if (isOverlapping && distZLeft < 0.6) {
-                                isTriggered = true; currentEventText = "מגע בפנים (יד)!";
-                            }
-                        }
+                        for (let hand of hands) {
+                            if (hand && !isTriggered) {
+                                // בדיקת פרספקטיבה (השוואת גודל היד לרוחב הפנים)
+                                const handSize = getDistance(hand[0], hand[9]);
+                                const handFaceRatio = handSize / faceWidth;
 
-                        // בדיקת יד ימין
-                        if (!isTriggered && results.rightHandLandmarks && results.poseLandmarks[16]) {
-                            let isOverlapping = false;
-                            for (let i of [8, 12, 16, 20]) {
-                                if (getDistance(results.rightHandLandmarks[i], noseFace) / faceWidth < 1.5) {
-                                    isOverlapping = true; break;
+                                // מוודא שהיד אינה מוגדלת עקב קירוב למצלמה
+                                if (handFaceRatio < 2.5) { 
+                                    // מעבר על קצות האצבעות
+                                    for (let i of [8, 12, 16, 20]) {
+                                        const distToNose = getDistance(hand[i], nose);
+                                        // 1.2 = רדיוס המכסה את הפנים ביחס לרוחבן
+                                        if (distToNose < faceWidth * 1.2) {
+                                            isTriggered = true;
+                                            currentEventText = "מגע בפנים!";
+                                            break;
+                                        }
+                                    }
                                 }
-                            }
-                            const distZRight = Math.abs(results.poseLandmarks[16].z - nosePose.z) / shoulderWidth;
-                            
-                            if (isOverlapping && distZRight < 0.6) {
-                                isTriggered = true; currentEventText = "מגע בפנים (יד)!";
                             }
                         }
                     }
                 }
             }
 
-            // --- שליחה לממשק ולמיקרוביט ---
+            // --- שליחה למיקרוביט וניהול חיווי תצוגה ---
             const now = Date.now();
             if (isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S'); 
                 lastSendTime = now;
-                statusDiv.innerText = `זיהוי: ${currentEventText}`; 
+                statusDiv.innerText = `זיהוי פעיל: ${currentEventText}`; 
                 statusDiv.style.color = "#FF9800"; 
             } else if (!isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
                 if(statusDiv.innerText !== "אין זיהוי פעיל" && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!" && !statusDiv.innerText.includes("טוען")) {
