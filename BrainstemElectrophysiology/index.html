@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD</title>
+    <title>PLD - מעבדת מחקר תלת-ממדית</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -77,7 +77,7 @@
     </div>
 
     <script>
-        // --- 1. תקשורת מיקרוביט ---
+        // --- תקשורת מיקרוביט ---
         let port, writer;
         const connectBtn = document.getElementById('connectBtn');
         const statusDiv = document.getElementById('status');
@@ -99,13 +99,12 @@
 
         async function sendCommand(cmd) { if (writer) await writer.write(cmd + '\r\n'); }
 
-        // --- 2. פרמטרים ומשתנים גלובליים ---
+        // --- פרמטרים ---
         const SEND_COOLDOWN = 400; 
         let lastSendTime = 0;
         let lastMouthDist = null;
         let lastLeftEyeDist = null;
 
-        // --- 3. הגדרת MediaPipe ---
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
@@ -138,7 +137,6 @@
             camera.start();
         });
 
-        // --- 4. פונקציות עזר גיאומטריות ---
         function getDistance(lm1, lm2) {
             if (!lm1 || !lm2) return 0;
             return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
@@ -154,33 +152,27 @@
             });
         }
 
-        // --- 5. לולאת העיבוד המרכזית ---
         function onResults(results) {
-            // ניקוי המסך השחור
             canvasCtx.fillStyle = 'black';
             canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
-            // ציור הנקודות בצבעים
-            drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); // גוף - מג'נטה
-            drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2); // פנים - טורקיז חצי שקוף
-            drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3); // ידיים - צהוב
+            drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); 
+            drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2); 
+            drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3); 
             drawPLDPoints(results.rightHandLandmarks, "#FFFF00", 3);
 
             let isTriggered = false;
             let currentEventText = "";
 
             if (results.faceLandmarks && results.poseLandmarks) {
-                // נורמליזציה - קנה מידה מבוסס משתמש
                 const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
                 const shoulderWidth = getDistance(results.poseLandmarks[11], results.poseLandmarks[12]);
                 
-                if (faceWidth > 0.02) { // מוודא שהפנים גדולות מספיק למדידה אמינה
+                if (faceWidth > 0.02) { 
                     
-                    // --- לוגיקת הבעות פנים ---
+                    // --- 1. הבעות פנים ---
                     const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                     const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
-                    
-                    // סף רגישות שגדל וקטן בהתאם למרחק שלך מהמצלמה
                     const expressionThreshold = faceWidth * 0.06; 
 
                     if (lastMouthDist !== null) {
@@ -193,45 +185,53 @@
                     }
                     lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist;
 
-                    // --- לוגיקת מגע תלת-ממדי ---
+                    // --- 2. מגע תלת-ממדי (הלוגיקה המתוקנת) ---
                     if (!isTriggered && shoulderWidth > 0.05) { 
-                        const noseFace = results.faceLandmarks[1];
-                        const nosePose = results.poseLandmarks[0]; // לעומק משתמשים במודל הגוף המסונכרן
+                        const noseFace = results.faceLandmarks[1]; // למישור המסך
+                        const nosePose = results.poseLandmarks[0]; // לציר העומק (Z) בלבד
 
-                        const hands = [results.leftHandLandmarks, results.rightHandLandmarks];
-                        hands.forEach(hand => {
-                            if (hand && !isTriggered) {
-                                const indexFinger = hand[8]; // אצבע מורה למדידת קרבה (XY)
-                                const wrist = hand[0];       // שורש כף היד למדידת עומק (Z) יציבה
-                                
-                                // מרחק מנורמל במישור המסך
-                                const distXY = getDistance(indexFinger, noseFace) / faceWidth;
-                                // מרחק מנורמל בעומק
-                                const distZ = Math.abs(wrist.z - nosePose.z) / shoulderWidth;
-
-                                // תנאי המגע (מורחב מעט כדי למנוע חסימת זיהויים תקינים)
-                                if (distXY < 1.5 && distZ < 0.6) {
-                                    isTriggered = true;
-                                    currentEventText = "מגע בפנים!";
+                        // בדיקת יד שמאל
+                        if (results.leftHandLandmarks && results.poseLandmarks[15]) {
+                            let isOverlapping = false;
+                            for (let i of [8, 12, 16, 20]) { // קצות האצבעות
+                                if (getDistance(results.leftHandLandmarks[i], noseFace) / faceWidth < 1.5) {
+                                    isOverlapping = true; break;
                                 }
                             }
-                        });
+                            // התיקון הקריטי: חישוב Z מתבצע רק בתוך מערכת הצירים של הגוף
+                            const distZLeft = Math.abs(results.poseLandmarks[15].z - nosePose.z) / shoulderWidth;
+                            
+                            if (isOverlapping && distZLeft < 0.6) {
+                                isTriggered = true; currentEventText = "מגע בפנים (יד)!";
+                            }
+                        }
+
+                        // בדיקת יד ימין
+                        if (!isTriggered && results.rightHandLandmarks && results.poseLandmarks[16]) {
+                            let isOverlapping = false;
+                            for (let i of [8, 12, 16, 20]) {
+                                if (getDistance(results.rightHandLandmarks[i], noseFace) / faceWidth < 1.5) {
+                                    isOverlapping = true; break;
+                                }
+                            }
+                            const distZRight = Math.abs(results.poseLandmarks[16].z - nosePose.z) / shoulderWidth;
+                            
+                            if (isOverlapping && distZRight < 0.6) {
+                                isTriggered = true; currentEventText = "מגע בפנים (יד)!";
+                            }
+                        }
                     }
                 }
             }
 
-            // --- 6. עדכון ממשק ושליחה למיקרוביט ---
+            // --- שליחה לממשק ולמיקרוביט ---
             const now = Date.now();
-            
             if (isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S'); 
                 lastSendTime = now;
-                
                 statusDiv.innerText = `זיהוי: ${currentEventText}`; 
-                statusDiv.style.color = "#FF9800"; // צבע כתום בולט לזיהוי
-                
+                statusDiv.style.color = "#FF9800"; 
             } else if (!isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
-                // אם חלף זמן הקירור ואין זיהוי פעיל כרגע - מחזירים לסטטוס שקט
                 if(statusDiv.innerText !== "אין זיהוי פעיל" && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!" && !statusDiv.innerText.includes("טוען")) {
                     statusDiv.innerText = "אין זיהוי פעיל"; 
                     statusDiv.style.color = "white";
