@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - ניטור אחוד ובקרת שידור</title>
+    <title>PLD - מעבדה (מצב שקט)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -53,7 +53,7 @@
             border: 1px solid #444;
         }
 
-        /* חיווי מרכזי אחוד לכל המצבים */
+        /* חיווי מרכזי אחוד וניטרלי */
         #main-status {
             position: absolute;
             top: 20px;
@@ -72,7 +72,7 @@
 </head>
 <body>
 
-    <h1>מעבדת PLD: ניטור אחוד</h1>
+    <h1>מעבדת PLD: ניטור תנועה</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
@@ -112,37 +112,29 @@
             }
         });
 
-        // משתנה נעילה למניעת הצפה (Cooldown)
+        // משתנה נעילה למניעת הצפה (Cooldown) - מוסתר מהמשתמש
         let isCooldown = false;
 
-        // פונקציה לשליחת צרור (Burst) מדויק - רצה רק בטריגרים של פנים!
-        async function triggerBurst(eventName) {
+        // פונקציית שידור שקטה לחלוטין - לא נוגעת בתצוגה שעל המסך
+        async function triggerBurst() {
             if (isCooldown) return; 
             
             isCooldown = true;
             
-            mainStatusDiv.innerText = `${eventName} (שולח 3 פעמים S)`;
-            mainStatusDiv.style.color = "#FF9800"; // כתום
-            mainStatusDiv.style.borderColor = "#FF9800";
-
             if (writer) {
+                // לולאה ששולחת את האות 3 פעמים
                 for (let i = 0; i < 3; i++) {
                     try {
                         await writer.write('S\r\n');
-                        console.log("נשלח: S");
+                        console.log("נשלח: S"); // מופיע רק ב-F12 לחוקר
                     } catch (err) {
                         console.error("שגיאת כתיבה:", err);
                     }
-                    await new Promise(resolve => setTimeout(resolve, 100)); // 100ms בין אות לאות
+                    await new Promise(resolve => setTimeout(resolve, 100)); // השהייה של 100ms בין אותיות
                 }
             } else {
                 await new Promise(resolve => setTimeout(resolve, 300));
             }
-
-            // שלב ההשהייה (Cooldown)
-            mainStatusDiv.innerText = "השהייה (1 שנייה)...";
-            mainStatusDiv.style.color = "#FFC107"; // צהוב
-            mainStatusDiv.style.borderColor = "#FFC107";
 
             // שחרור הנעילה אחרי שנייה אחת
             setTimeout(() => {
@@ -156,7 +148,7 @@
         let lastBodyCenter = null;
         let lastLeftHand = null;
         let lastRightHand = null;
-        let lastDetectionTime = 0; // למניעת הבהוב של כיתוב ה"סורק..."
+        let lastDetectionTime = 0; 
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -222,7 +214,7 @@
                 
                 if (faceWidth > 0.02 && shoulderWidth > 0.05) { 
                     
-                    // --- טריגרים (גורמים לשליחת S) ---
+                    // זיהוי תנועת פה
                     const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                     if (lastMouthDist !== null && Math.abs(mouthDist - lastMouthDist) > faceWidth * 0.06) {
                         state.mouthMove = true;
@@ -233,6 +225,7 @@
                     const leftHandCenter = getCenter(results.leftHandLandmarks);
                     const rightHandCenter = getCenter(results.rightHandLandmarks);
 
+                    // זיהוי מגע בפנים
                     [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
                         if (hand) {
                             let isOverlapping = false;
@@ -246,14 +239,16 @@
                         }
                     });
 
-                    // --- ניטור היקפי (תצוגה בלבד) ---
+                    // זיהוי תנועת ראש
                     if (lastNosePos && getDistance(noseFace, lastNosePos) / faceWidth > 0.05) state.headMove = true;
                     lastNosePos = noseFace;
 
+                    // זיהוי תנועת גוף
                     const bodyCenter = getCenter([results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]);
                     if (lastBodyCenter && bodyCenter && getDistance(bodyCenter, lastBodyCenter) / shoulderWidth > 0.03) state.bodyMove = true;
                     lastBodyCenter = bodyCenter;
 
+                    // זיהוי תנועת ידיים
                     [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
                         if (hand) {
                             const handCenter = getCenter(hand);
@@ -264,48 +259,44 @@
                         }
                     });
 
+                    // זיהוי מגע בין הידיים
                     if (leftHandCenter && rightHandCenter && getDistance(leftHandCenter, rightHandCenter) / shoulderWidth < 0.35) {
                         state.handTouch = true;
                     }
                 }
             }
 
-            // --- 3. עדכון UI והפעלת פקודות ---
-            if (!isCooldown) {
-                let triggerText = "";
-                let nonTriggerText = "";
+            // --- 3. עדכון התצוגה ושליחה נסתרת לחומרה ---
+            
+            // בדיקת טריגרים לשליחת אות (מאחורי הקלעים)
+            if (state.mouthMove || state.faceTouch) {
+                triggerBurst();
+            }
 
-                // קביעת טקסט לטריגרים
-                if (state.mouthMove) triggerText = "תנועת פה!";
-                else if (state.faceTouch) triggerText = "מגע בפנים!";
+            // עדכון הממשק הויזואלי (צבע אחיד לכל סוגי הזיהוי)
+            let uiText = "";
+            
+            // בחר את הפעולה הבולטת ביותר להצגה על המסך
+            if (state.faceTouch) uiText = "מגע בפנים";
+            else if (state.mouthMove) uiText = "תנועת פה";
+            else if (state.handTouch) uiText = "מגע בידיים";
+            else if (state.handMove) uiText = "תנועת ידיים";
+            else if (state.headMove) uiText = "תנועת ראש";
+            else if (state.bodyMove) uiText = "תנועת גוף";
 
-                // קביעת טקסט לניטור (אם אין טריגר פעיל)
-                if (!triggerText) {
-                    if (state.handTouch) nonTriggerText = "מגע בידיים";
-                    else if (state.handMove) nonTriggerText = "תנועת ידיים";
-                    else if (state.headMove) nonTriggerText = "תנועת ראש";
-                    else if (state.bodyMove) nonTriggerText = "תנועת גוף";
-                }
-
-                if (triggerText) {
-                    // הפעלת פונקציית הירי (משנה את הסטטוס אוטומטית בפנים)
-                    triggerBurst(triggerText);
-                    lastDetectionTime = Date.now();
-                } 
-                else if (nonTriggerText) {
-                    // הצגת ניטור בלבד - לא משדר!
-                    mainStatusDiv.innerText = `זיהוי: ${nonTriggerText}`;
-                    mainStatusDiv.style.color = "#00BCD4"; // טורקיז
-                    mainStatusDiv.style.borderColor = "#00BCD4";
-                    lastDetectionTime = Date.now();
-                } 
-                else if (Date.now() - lastDetectionTime > 400) {
-                    // אם הכל שקט יותר מ-400ms, חזור למצב סורק
-                    if(mainStatusDiv.innerText !== "סורק..." && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("שגיאה")) {
-                        mainStatusDiv.innerText = "סורק..."; 
-                        mainStatusDiv.style.color = "white";
-                        mainStatusDiv.style.borderColor = "#333";
-                    }
+            if (uiText) {
+                // כל תנועה מוצגת באותו צבע (טורקיז) כדי לא להסגיר מתי נשלח אות למיקרוביט
+                mainStatusDiv.innerText = `זיהוי: ${uiText}`;
+                mainStatusDiv.style.color = "#00BCD4"; 
+                mainStatusDiv.style.borderColor = "#00BCD4";
+                lastDetectionTime = Date.now();
+            } 
+            else if (Date.now() - lastDetectionTime > 400) {
+                // אם הכל שקט, חזור למצב סורק
+                if(mainStatusDiv.innerText !== "סורק..." && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("שגיאה")) {
+                    mainStatusDiv.innerText = "סורק..."; 
+                    mainStatusDiv.style.color = "white";
+                    mainStatusDiv.style.borderColor = "#333";
                 }
             }
         }
