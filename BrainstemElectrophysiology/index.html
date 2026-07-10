@@ -152,7 +152,7 @@
         }
 
         // --- 2. פרמטרים ---
-        const SEND_COOLDOWN = 100; 
+        const SEND_COOLDOWN = 1000; 
         let lastSendTime = 0;
         
         let lastMouthDist = null;
@@ -313,7 +313,7 @@
             if (shouldSendS && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S'); 
                 lastSendTime = now;
-                mainStatusDiv.innerText = "שולח אות S!"; 
+                // mainStatusDiv.innerText = "שולח אות S!"; 
                 mainStatusDiv.style.color = "#FF9800"; 
                 mainStatusDiv.style.borderColor = "#FF9800"; 
             } else if (!shouldSendS && (now - lastSendTime > 400)) { 
