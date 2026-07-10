@@ -103,14 +103,13 @@
         
         <div id="main-status">ממתין להפעלה...</div>
 
-        <div id="peripheral-status">
+        // <div id="peripheral-status">
             <div id="ind-body-move" class="peripheral-item">תנועת גוף: --</div>
             <div id="ind-head-move" class="peripheral-item">תנועת ראש: --</div>
             <div id="ind-mouth" class="peripheral-item trigger-item">תנועת פה: --</div>
             <div id="ind-hand-move" class="peripheral-item">תנועת יד: --</div>
             <div id="ind-hand-touch" class="peripheral-item">מגע ביד: --</div>
             <div id="ind-face-touch" class="peripheral-item trigger-item">מגע בפנים: --</div>
-
         </div>
     </div>
 
@@ -229,6 +228,7 @@
                     const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                     if (lastMouthDist !== null && Math.abs(mouthDist - lastMouthDist) > faceWidth * 0.06) {
                         state.mouthMove = true;
+                        mainStatusDiv.innerText = "זיהוי תנועת פה!";
                     }
                     lastMouthDist = mouthDist;
 
@@ -236,6 +236,7 @@
                     const noseFace = results.faceLandmarks[1];
                     if (lastNosePos && getDistance(noseFace, lastNosePos) / faceWidth > 0.05) {
                         state.headMove = true;
+                        mainStatusDiv.innerText = "זיהוי תנועת ראש!";
                     }
                     lastNosePos = noseFace;
 
@@ -243,6 +244,8 @@
                     const bodyCenter = getCenter([results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]);
                     if (lastBodyCenter && bodyCenter && getDistance(bodyCenter, lastBodyCenter) / shoulderWidth > 0.03) {
                         state.bodyMove = true;
+                        mainStatusDiv.innerText = "זיהוי תנועת גוף!";
+
                     }
                     lastBodyCenter = bodyCenter;
 
@@ -257,6 +260,8 @@
                             const lastHandCenter = (hand === results.leftHandLandmarks) ? lastLeftHand : lastRightHand;
                             if (lastHandCenter && getDistance(handCenter, lastHandCenter) / shoulderWidth > 0.08) {
                                 state.handMove = true;
+                                mainStatusDiv.innerText = "זיהוי תנועת יד!";
+
                             }
                             if (hand === results.leftHandLandmarks) lastLeftHand = handCenter;
                             else lastRightHand = handCenter;
@@ -274,6 +279,7 @@
                             const handSize = getDistance(hand[0], hand[9]);
                             if (isOverlapping && (handSize / faceWidth < 1.8)) {
                                 state.faceTouch = true;
+                                mainStatusDiv.innerText = "זיהוי מגע בפנים!";
                             }
                         }
                     });
@@ -282,6 +288,7 @@
                     if (leftHandCenter && rightHandCenter) {
                         if (getDistance(leftHandCenter, rightHandCenter) / shoulderWidth < 0.35) {
                             state.handTouch = true;
+                            mainStatusDiv.innerText = "זיהוי מגע בידיים!";
                         }
                     }
                 }
