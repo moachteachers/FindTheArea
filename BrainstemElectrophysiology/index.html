@@ -77,6 +77,7 @@
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
         <button id="startCamBtn">2. הפעל מצלמה</button>
+        <button id="fullscreenBtn">מסך מלא</button>
     </div>
 
     <div id="container">
@@ -87,6 +88,15 @@
     </div>
 
     <script>
+
+    document.getElementById('fullscreenBtn').addEventListener('click', () => {
+    const elem = document.documentElement; // האתר כולו
+    if (!document.fullscreenElement) {
+        elem.requestFullscreen().catch(err => alert(`שגיאה: ${err.message}`));
+        } else {
+        document.exitFullscreen();
+        }
+    });
         // --- 1. תקשורת מיקרוביט ---
         let port, writer;
         const connectBtn = document.getElementById('connectBtn');
