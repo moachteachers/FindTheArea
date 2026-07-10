@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - מעבדת מחקר מקיפה</title>
+    <title>PLD - מגע ותנועת פה</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -67,30 +67,11 @@
             border: 2px solid #333;
             z-index: 10;
         }
-
-        /* עיצוב לוח הזיהוי ההיקפי (תצוגה בלבד) */
-        #peripheral-status {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 15px;
-            border-radius: 10px;
-            font-size: 16px;
-            text-align: right;
-            border-right: 4px solid #00BCD4;
-            color: #ddd;
-            z-index: 10;
-            min-width: 200px;
-        }
-        .peripheral-item { margin: 5px 0; }
-        .active-peripheral { color: #00FFFF; font-weight: bold; }
-
     </style>
 </head>
 <body>
 
-    <h1>מעבדת PLD מורחבת: פנים וגוף</h1>
+    <h1>מעבדת PLD: תנועת פה ומגע בפנים</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
@@ -102,14 +83,6 @@
         <canvas id="output_canvas" width="1280" height="720"></canvas>
         
         <div id="main-status">ממתין להפעלה...</div>
-
-        <div id="peripheral-status">
-            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">ניטור היקפי (תצוגה בלבד):</div>
-            <div id="ind-hand-move" class="peripheral-item">תנועת ידיים: --</div>
-            <div id="ind-body-move" class="peripheral-item">תנועת גוף: --</div>
-            <div id="ind-hand-touch" class="peripheral-item">מגע בידיים: --</div>
-            <div id="ind-body-touch" class="peripheral-item">מגע בגוף: --</div>
-        </div>
     </div>
 
     <script>
@@ -136,9 +109,7 @@
         // --- פרמטרים ומשתני עבר ---
         const SEND_COOLDOWN = 400; 
         let lastSendTime = 0;
-        
-        let lastMouthDist = null, lastLeftEyeDist = null;
-        let lastBodyCenter = null, lastLeftHand = null, lastRightHand = null;
+        let lastMouthDist = null;
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -164,13 +135,6 @@
             return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
         }
 
-        function getCenter(landmarks) {
-            if (!landmarks || landmarks.length === 0) return null;
-            let sumX = 0, sumY = 0;
-            landmarks.forEach(lm => { sumX += lm.x; sumY += lm.y; });
-            return { x: sumX / landmarks.length, y: sumY / landmarks.length };
-        }
-
         function drawPLDPoints(landmarks, color, size) {
             if (!landmarks) return;
             canvasCtx.fillStyle = color;
@@ -186,16 +150,14 @@
             canvasCtx.fillStyle = 'black';
             canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
+            // ציור המיפוי (PLD)
             drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); // גוף מג'נטה
             drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2); // פנים טורקיז
             drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3); // ידיים צהוב
             drawPLDPoints(results.rightHandLandmarks, "#FFFF00", 3);
 
-            let isFaceTriggered = false;
-            let faceEventText = "";
-
-            // משתני אינדיקציה היקפית (מסך בלבד)
-            let indHandMove = false, indBodyMove = false, indHandTouch = false, indBodyTouch = false;
+            let isTriggered = false;
+            let eventText = "";
 
             if (results.faceLandmarks && results.poseLandmarks) {
                 const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
@@ -203,115 +165,60 @@
                 
                 if (faceWidth > 0.02 && shoulderWidth > 0.05) { 
                     
-                    // ==========================================
-                    // חלק א': זיהוי פנים (משדר למיקרוביט)
-                    // ==========================================
+                    // 1. זיהוי תנועת פה
                     const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
-                    const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
                     const expressionThreshold = faceWidth * 0.06; 
 
                     if (lastMouthDist !== null) {
                         if (Math.abs(mouthDist - lastMouthDist) > expressionThreshold) {
-                            isFaceTriggered = true; faceEventText = "תנועת פה!";
-                        } else if (Math.abs(leftEyeDist - lastLeftEyeDist) > expressionThreshold) {
-                            isFaceTriggered = true; faceEventText = "תנועת עיניים!";
+                            isTriggered = true; 
+                            eventText = "תנועת פה!";
                         }
                     }
-                    lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist;
+                    lastMouthDist = mouthDist;
 
-                    if (!isFaceTriggered) { 
+                    // 2. זיהוי מגע בפנים (תלת-ממדי)
+                    if (!isTriggered) { 
                         const noseFace = results.faceLandmarks[1];
                         const nosePose = results.poseLandmarks[0];
 
                         [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
-                            if (hand && !isFaceTriggered) {
+                            if (hand && !isTriggered) {
                                 let isOverlapping = false;
                                 for (let i of [8, 12, 16, 20]) { 
                                     if (getDistance(hand[i], noseFace) / faceWidth < 1.5) { isOverlapping = true; break; }
                                 }
-                                const wrist = hand[0]; // מחלצים משורש כף היד של מודל הידיים
-                                // מציאת מזהה תואם במודל הגוף כדי לקבל Z אמין
+                                
                                 const poseWrist = (hand === results.leftHandLandmarks) ? results.poseLandmarks[15] : results.poseLandmarks[16];
                                 
                                 if (poseWrist) {
                                     const distZ = Math.abs(poseWrist.z - nosePose.z) / shoulderWidth;
                                     if (isOverlapping && distZ < 0.6) {
-                                        isFaceTriggered = true; faceEventText = "מגע בפנים!";
+                                        isTriggered = true; 
+                                        eventText = "מגע בפנים!";
                                     }
                                 }
                             }
                         });
                     }
-
-                    // ==========================================
-                    // חלק ב': זיהוי היקפי (תצוגה בלבד!)
-                    // ==========================================
-                    const bodyCenter = getCenter([results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]);
-                    const leftHandCenter = getCenter(results.leftHandLandmarks);
-                    const rightHandCenter = getCenter(results.rightHandLandmarks);
-
-                    // 1. תנועת גוף
-                    if (lastBodyCenter && bodyCenter && getDistance(bodyCenter, lastBodyCenter) / shoulderWidth > 0.03) {
-                        indBodyMove = true;
-                    }
-                    lastBodyCenter = bodyCenter;
-
-                    // 2. תנועת ידיים
-                    if (leftHandCenter && lastLeftHand && getDistance(leftHandCenter, lastLeftHand) / shoulderWidth > 0.08) indHandMove = true;
-                    if (rightHandCenter && lastRightHand && getDistance(rightHandCenter, lastRightHand) / shoulderWidth > 0.08) indHandMove = true;
-                    lastLeftHand = leftHandCenter; lastRightHand = rightHandCenter;
-
-                    // 3. מגע בין הידיים (יד ליד)
-                    if (leftHandCenter && rightHandCenter) {
-                        if (getDistance(leftHandCenter, rightHandCenter) / shoulderWidth < 0.35) {
-                            indHandTouch = true;
-                        }
-                    }
-
-                    // 4. מגע של הידיים בגוף
-                    const torsoPoints = [results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]; // כתפיים ומותניים
-                    [leftHandCenter, rightHandCenter].forEach(hand => {
-                        if (hand) {
-                            torsoPoints.forEach(torsoPt => {
-                                if (getDistance(hand, torsoPt) / shoulderWidth < 0.25) indBodyTouch = true;
-                            });
-                        }
-                    });
                 }
             }
 
-            // --- עדכון חיווי הפנים המרכזי והשידור (מיקרוביט) ---
+            // --- עדכון חיווי מרכזי ושידור למיקרוביט ---
             const now = Date.now();
-            if (isFaceTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
+            if (isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S'); 
                 lastSendTime = now;
-                mainStatusDiv.innerText = `זיהוי פעיל: ${faceEventText}`; 
+                mainStatusDiv.innerText = `זיהוי פעיל: ${eventText}`; 
                 mainStatusDiv.style.color = "#FF9800"; 
                 mainStatusDiv.style.borderColor = "#FF9800"; 
-            } else if (!isFaceTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
+            } else if (!isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
                 if(mainStatusDiv.innerText !== "אין זיהוי פעיל" && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("טוען")) {
                     mainStatusDiv.innerText = "אין זיהוי פעיל"; 
                     mainStatusDiv.style.color = "white";
                     mainStatusDiv.style.borderColor = "#333";
                 }
             }
-
-            // --- עדכון חיווי הניטור ההיקפי (UI בלבד) ---
-            const updateIndicator = (id, isActive, text) => {
-                const el = document.getElementById(id);
-                if (isActive) {
-                    el.innerText = `🟢 ${text}`;
-                    el.className = "peripheral-item active-peripheral";
-                } else {
-                    el.innerText = `⚪ ${text}`;
-                    el.className = "peripheral-item";
-                }
-            };
-
-            updateIndicator("ind-hand-move", indHandMove, "תנועת ידיים");
-            updateIndicator("ind-body-move", indBodyMove, "תנועת גוף");
-            updateIndicator("ind-hand-touch", indHandTouch, "מגע בידיים");
-            updateIndicator("ind-body-touch", indBodyTouch, "מגע בגוף");
         }
     </script>
 </body>
