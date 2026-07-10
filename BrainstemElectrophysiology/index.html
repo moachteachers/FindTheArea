@@ -104,15 +104,13 @@
         <div id="main-status">ממתין להפעלה...</div>
 
         <div id="peripheral-status">
-            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">משדר למיקרוביט:</div>
-            <div id="ind-mouth" class="peripheral-item trigger-item">תנועת פה: --</div>
-            <div id="ind-face-touch" class="peripheral-item trigger-item">מגע בפנים: --</div>
-            
-            <div style="color: #888; font-size: 12px; margin-top: 15px; margin-bottom: 8px;">ניטור בלבד (לא משדר):</div>
-            <div id="ind-head-move" class="peripheral-item">תנועת ראש: --</div>
             <div id="ind-body-move" class="peripheral-item">תנועת גוף: --</div>
+            <div id="ind-head-move" class="peripheral-item">תנועת ראש: --</div>
+            <div id="ind-mouth" class="peripheral-item trigger-item">תנועת פה: --</div>
             <div id="ind-hand-move" class="peripheral-item">תנועת יד: --</div>
             <div id="ind-hand-touch" class="peripheral-item">מגע ביד: --</div>
+            <div id="ind-face-touch" class="peripheral-item trigger-item">מגע בפנים: --</div>
+
         </div>
     </div>
 
@@ -137,7 +135,7 @@
                 console.log("Serial port opened successfully.");
             } catch (error) {
                 console.error("Serial connection error:", error);
-                mainStatusDiv.innerText = "שגיאת התחברות.";
+                mainStatusDiv.innerText = "שגיאת התחברות. נתקו את המיקרוביט מהמחשב, חברו מחדש ונסו שנית";
                 mainStatusDiv.style.borderColor = "#F44336";
             }
         });
