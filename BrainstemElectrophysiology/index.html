@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Point Light Display - מעבדת מחקר תנועה ומגע</title>
+    <title>PLD - מעבדת מחקר מקיפה</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -44,12 +44,6 @@
         video { display: none; }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
-        #status { 
-            font-size: 24px; 
-            margin-top: 15px; 
-            min-height: 35px; 
-            font-weight: bold; 
-        }
         .controls { 
             background-color: #222; 
             padding: 10px; 
@@ -58,88 +52,123 @@
             margin-bottom: 10px; 
             border: 1px solid #444;
         }
+
+        /* עיצוב חיווי הפנים המרכזי (שולח למיקרוביט) */
+        #main-status {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 30px;
+            border-radius: 20px;
+            font-size: 22px;
+            font-weight: bold;
+            border: 2px solid #333;
+            z-index: 10;
+        }
+
+        /* עיצוב לוח הזיהוי ההיקפי (תצוגה בלבד) */
+        #peripheral-status {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 16px;
+            text-align: right;
+            border-right: 4px solid #00BCD4;
+            color: #ddd;
+            z-index: 10;
+            min-width: 200px;
+        }
+        .peripheral-item { margin: 5px 0; }
+        .active-peripheral { color: #00FFFF; font-weight: bold; }
+
     </style>
 </head>
 <body>
 
-    <h1>Point Light Display</h1>
+    <h1>מעבדת PLD מורחבת: פנים וגוף</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
         <button id="startCamBtn">2. הפעל מצלמה</button>
     </div>
 
-    <div id="status">ממתין לפעולה...</div>
-
     <div id="container">
         <video id="input_video" autoplay playsinline></video>
         <canvas id="output_canvas" width="1280" height="720"></canvas>
+        
+        <div id="main-status">ממתין להפעלה...</div>
+
+        <div id="peripheral-status">
+            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">ניטור היקפי (תצוגה בלבד):</div>
+            <div id="ind-hand-move" class="peripheral-item">תנועת ידיים: --</div>
+            <div id="ind-body-move" class="peripheral-item">תנועת גוף: --</div>
+            <div id="ind-hand-touch" class="peripheral-item">מגע בידיים: --</div>
+            <div id="ind-body-touch" class="peripheral-item">מגע בגוף: --</div>
+        </div>
     </div>
 
     <script>
-        // --- תקשורת למיקרוביט ---
+        // --- תקשורת מיקרוביט ---
         let port, writer;
         const connectBtn = document.getElementById('connectBtn');
-        const statusDiv = document.getElementById('status');
+        const mainStatusDiv = document.getElementById('main-status');
 
         connectBtn.addEventListener('click', async () => {
             try {
                 port = await navigator.serial.requestPort();
                 await port.open({ baudRate: 115200 });
-                const textEncoder = new TextEncoderStream();
-                textEncoder.readable.pipeTo(port.writable);
-                writer = textEncoder.writable.getWriter();
-                statusDiv.innerText = "מחובר למיקרוביט בהצלחה!";
-                statusDiv.style.color = "#4CAF50";
+                writer = new TextEncoderStream().readable.pipeTo(port.writable) && new TextEncoderStream().writable.getWriter();
+                mainStatusDiv.innerText = "מחובר למיקרוביט!";
+                mainStatusDiv.style.borderColor = "#4CAF50";
             } catch (error) {
-                statusDiv.innerText = "שגיאת התחברות למיקרוביט.";
-                statusDiv.style.color = "#F44336";
+                mainStatusDiv.innerText = "שגיאת התחברות.";
+                mainStatusDiv.style.borderColor = "#F44336";
             }
         });
 
         async function sendCommand(cmd) { if (writer) await writer.write(cmd + '\r\n'); }
 
-        // --- פרמטרים ---
+        // --- פרמטרים ומשתני עבר ---
         const SEND_COOLDOWN = 400; 
         let lastSendTime = 0;
-        let lastMouthDist = null;
-        let lastLeftEyeDist = null;
+        
+        let lastMouthDist = null, lastLeftEyeDist = null;
+        let lastBodyCenter = null, lastLeftHand = null, lastRightHand = null;
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
-        const startCamBtn = document.getElementById('startCamBtn');
 
-        const holistic = new Holistic({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
-        }});
-
+        const holistic = new Holistic({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`});
         holistic.setOptions({
-            modelComplexity: 1, 
-            smoothLandmarks: true, 
-            enableSegmentation: false,
-            smoothSegmentation: false, 
-            refineFaceLandmarks: true,
-            minDetectionConfidence: 0.5, 
-            minTrackingConfidence: 0.5
+            modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false,
+            smoothSegmentation: false, refineFaceLandmarks: true,
+            minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
         });
-
         holistic.onResults(onResults);
 
-        startCamBtn.addEventListener('click', () => {
-            startCamBtn.disabled = true;
-            statusDiv.innerText = "טוען מצלמה...";
-            statusDiv.style.color = "white";
-            const camera = new Camera(videoElement, {
-                onFrame: async () => { await holistic.send({image: videoElement}); },
-                width: 1280, height: 720
-            });
-            camera.start();
+        document.getElementById('startCamBtn').addEventListener('click', (e) => {
+            e.target.disabled = true;
+            mainStatusDiv.innerText = "טוען מצלמה...";
+            new Camera(videoElement, { onFrame: async () => { await holistic.send({image: videoElement}); }, width: 1280, height: 720 }).start();
         });
 
+        // --- פונקציות מתמטיות ---
         function getDistance(lm1, lm2) {
             if (!lm1 || !lm2) return 0;
             return Math.hypot(lm1.x - lm2.x, lm1.y - lm2.y);
+        }
+
+        function getCenter(landmarks) {
+            if (!landmarks || landmarks.length === 0) return null;
+            let sumX = 0, sumY = 0;
+            landmarks.forEach(lm => { sumX += lm.x; sumY += lm.y; });
+            return { x: sumX / landmarks.length, y: sumY / landmarks.length };
         }
 
         function drawPLDPoints(landmarks, color, size) {
@@ -152,82 +181,137 @@
             });
         }
 
+        // --- לולאת הזיהוי ---
         function onResults(results) {
             canvasCtx.fillStyle = 'black';
             canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
-            // שמירה על עיצוב מדעי נקי (ללא אפקטים, רק נקודות ממופות)
-            drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); 
-            drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2); 
-            drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3); 
+            drawPLDPoints(results.poseLandmarks, "#FF00FF", 4); // גוף מג'נטה
+            drawPLDPoints(results.faceLandmarks, "rgba(0, 255, 255, 0.6)", 2); // פנים טורקיז
+            drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3); // ידיים צהוב
             drawPLDPoints(results.rightHandLandmarks, "#FFFF00", 3);
 
-            let isTriggered = false;
-            let currentEventText = "";
+            let isFaceTriggered = false;
+            let faceEventText = "";
 
-            if (results.faceLandmarks) {
+            // משתני אינדיקציה היקפית (מסך בלבד)
+            let indHandMove = false, indBodyMove = false, indHandTouch = false, indBodyTouch = false;
+
+            if (results.faceLandmarks && results.poseLandmarks) {
                 const faceWidth = getDistance(results.faceLandmarks[33], results.faceLandmarks[263]);
+                const shoulderWidth = getDistance(results.poseLandmarks[11], results.poseLandmarks[12]);
                 
-                if (faceWidth > 0.02) { 
+                if (faceWidth > 0.02 && shoulderWidth > 0.05) { 
                     
-                    // --- 1. הבעות פנים ---
+                    // ==========================================
+                    // חלק א': זיהוי פנים (משדר למיקרוביט)
+                    // ==========================================
                     const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                     const leftEyeDist = getDistance(results.faceLandmarks[159], results.faceLandmarks[145]);
                     const expressionThreshold = faceWidth * 0.06; 
 
                     if (lastMouthDist !== null) {
                         if (Math.abs(mouthDist - lastMouthDist) > expressionThreshold) {
-                            isTriggered = true; currentEventText = "תנועת פה!";
-                        }
-                        else if (Math.abs(leftEyeDist - lastLeftEyeDist) > expressionThreshold) {
-                            isTriggered = true; currentEventText = "תנועת עיניים!";
+                            isFaceTriggered = true; faceEventText = "תנועת פה!";
+                        } else if (Math.abs(leftEyeDist - lastLeftEyeDist) > expressionThreshold) {
+                            isFaceTriggered = true; faceEventText = "תנועת עיניים!";
                         }
                     }
                     lastMouthDist = mouthDist; lastLeftEyeDist = leftEyeDist;
 
-                    // --- 2. מגע בפנים (ללא תלות בכתפיים או במודל הגוף) ---
-                    if (!isTriggered) { 
-                        const nose = results.faceLandmarks[1];
-                        const hands = [results.leftHandLandmarks, results.rightHandLandmarks];
+                    if (!isFaceTriggered) { 
+                        const noseFace = results.faceLandmarks[1];
+                        const nosePose = results.poseLandmarks[0];
 
-                        for (let hand of hands) {
-                            if (hand && !isTriggered) {
-                                // בדיקת פרספקטיבה (השוואת גודל היד לרוחב הפנים)
-                                const handSize = getDistance(hand[0], hand[9]);
-                                const handFaceRatio = handSize / faceWidth;
-
-                                // מוודא שהיד אינה מוגדלת עקב קירוב למצלמה
-                                if (handFaceRatio < 2.5) { 
-                                    // מעבר על קצות האצבעות
-                                    for (let i of [8, 12, 16, 20]) {
-                                        const distToNose = getDistance(hand[i], nose);
-                                        // 1.2 = רדיוס המכסה את הפנים ביחס לרוחבן
-                                        if (distToNose < faceWidth * 1.2) {
-                                            isTriggered = true;
-                                            currentEventText = "מגע בפנים!";
-                                            break;
-                                        }
+                        [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
+                            if (hand && !isFaceTriggered) {
+                                let isOverlapping = false;
+                                for (let i of [8, 12, 16, 20]) { 
+                                    if (getDistance(hand[i], noseFace) / faceWidth < 1.5) { isOverlapping = true; break; }
+                                }
+                                const wrist = hand[0]; // מחלצים משורש כף היד של מודל הידיים
+                                // מציאת מזהה תואם במודל הגוף כדי לקבל Z אמין
+                                const poseWrist = (hand === results.leftHandLandmarks) ? results.poseLandmarks[15] : results.poseLandmarks[16];
+                                
+                                if (poseWrist) {
+                                    const distZ = Math.abs(poseWrist.z - nosePose.z) / shoulderWidth;
+                                    if (isOverlapping && distZ < 0.6) {
+                                        isFaceTriggered = true; faceEventText = "מגע בפנים!";
                                     }
                                 }
                             }
+                        });
+                    }
+
+                    // ==========================================
+                    // חלק ב': זיהוי היקפי (תצוגה בלבד!)
+                    // ==========================================
+                    const bodyCenter = getCenter([results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]);
+                    const leftHandCenter = getCenter(results.leftHandLandmarks);
+                    const rightHandCenter = getCenter(results.rightHandLandmarks);
+
+                    // 1. תנועת גוף
+                    if (lastBodyCenter && bodyCenter && getDistance(bodyCenter, lastBodyCenter) / shoulderWidth > 0.03) {
+                        indBodyMove = true;
+                    }
+                    lastBodyCenter = bodyCenter;
+
+                    // 2. תנועת ידיים
+                    if (leftHandCenter && lastLeftHand && getDistance(leftHandCenter, lastLeftHand) / shoulderWidth > 0.08) indHandMove = true;
+                    if (rightHandCenter && lastRightHand && getDistance(rightHandCenter, lastRightHand) / shoulderWidth > 0.08) indHandMove = true;
+                    lastLeftHand = leftHandCenter; lastRightHand = rightHandCenter;
+
+                    // 3. מגע בין הידיים (יד ליד)
+                    if (leftHandCenter && rightHandCenter) {
+                        if (getDistance(leftHandCenter, rightHandCenter) / shoulderWidth < 0.35) {
+                            indHandTouch = true;
                         }
                     }
+
+                    // 4. מגע של הידיים בגוף
+                    const torsoPoints = [results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]; // כתפיים ומותניים
+                    [leftHandCenter, rightHandCenter].forEach(hand => {
+                        if (hand) {
+                            torsoPoints.forEach(torsoPt => {
+                                if (getDistance(hand, torsoPt) / shoulderWidth < 0.25) indBodyTouch = true;
+                            });
+                        }
+                    });
                 }
             }
 
-            // --- שליחה למיקרוביט וניהול חיווי תצוגה ---
+            // --- עדכון חיווי הפנים המרכזי והשידור (מיקרוביט) ---
             const now = Date.now();
-            if (isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
+            if (isFaceTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
                 sendCommand('S'); 
                 lastSendTime = now;
-                statusDiv.innerText = `זיהוי פעיל: ${currentEventText}`; 
-                statusDiv.style.color = "#FF9800"; 
-            } else if (!isTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
-                if(statusDiv.innerText !== "אין זיהוי פעיל" && statusDiv.innerText !== "מחובר למיקרוביט בהצלחה!" && !statusDiv.innerText.includes("טוען")) {
-                    statusDiv.innerText = "אין זיהוי פעיל"; 
-                    statusDiv.style.color = "white";
+                mainStatusDiv.innerText = `זיהוי פעיל: ${faceEventText}`; 
+                mainStatusDiv.style.color = "#FF9800"; 
+                mainStatusDiv.style.borderColor = "#FF9800"; 
+            } else if (!isFaceTriggered && (now - lastSendTime > SEND_COOLDOWN)) {
+                if(mainStatusDiv.innerText !== "אין זיהוי פעיל" && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("טוען")) {
+                    mainStatusDiv.innerText = "אין זיהוי פעיל"; 
+                    mainStatusDiv.style.color = "white";
+                    mainStatusDiv.style.borderColor = "#333";
                 }
             }
+
+            // --- עדכון חיווי הניטור ההיקפי (UI בלבד) ---
+            const updateIndicator = (id, isActive, text) => {
+                const el = document.getElementById(id);
+                if (isActive) {
+                    el.innerText = `🟢 ${text}`;
+                    el.className = "peripheral-item active-peripheral";
+                } else {
+                    el.innerText = `⚪ ${text}`;
+                    el.className = "peripheral-item";
+                }
+            };
+
+            updateIndicator("ind-hand-move", indHandMove, "תנועת ידיים");
+            updateIndicator("ind-body-move", indBodyMove, "תנועת גוף");
+            updateIndicator("ind-hand-touch", indHandTouch, "מגע בידיים");
+            updateIndicator("ind-body-touch", indBodyTouch, "מגע בגוף");
         }
     </script>
 </body>
