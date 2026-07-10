@@ -117,7 +117,7 @@
     </div>
 
     <script>
-        // --- תקשורת מיקרוביט ---
+        // --- 1. תקשורת מיקרוביט (תוקן!) ---
         let port, writer;
         const connectBtn = document.getElementById('connectBtn');
         const mainStatusDiv = document.getElementById('main-status');
@@ -126,19 +126,35 @@
             try {
                 port = await navigator.serial.requestPort();
                 await port.open({ baudRate: 115200 });
-                writer = new TextEncoderStream().readable.pipeTo(port.writable) && new TextEncoderStream().writable.getWriter();
+                
+                // הדרך הנכונה והיציבה לפתוח ערוץ כתיבה:
+                const textEncoder = new TextEncoderStream();
+                textEncoder.readable.pipeTo(port.writable);
+                writer = textEncoder.writable.getWriter();
+                
                 mainStatusDiv.innerText = "מחובר למיקרוביט!";
                 mainStatusDiv.style.borderColor = "#4CAF50";
+                console.log("Serial port opened successfully.");
             } catch (error) {
+                console.error("Serial connection error:", error);
                 mainStatusDiv.innerText = "שגיאת התחברות.";
                 mainStatusDiv.style.borderColor = "#F44336";
             }
         });
 
-        async function sendCommand(cmd) { if (writer) await writer.write(cmd + '\r\n'); }
+        async function sendCommand(cmd) { 
+            if (writer) {
+                try {
+                    await writer.write(cmd + '\r\n');
+                    console.log("נשלח למיקרוביט:", cmd); // חיווי בקונסול לאימות שליחה
+                } catch (err) {
+                    console.error("שגיאה בשליחת הנתונים:", err);
+                }
+            }
+        }
 
-        // --- פרמטרים ומשתני עבר ---
-        const SEND_COOLDOWN = 100; // קצב שליחה מהיר לחומרה
+        // --- 2. פרמטרים ---
+        const SEND_COOLDOWN = 100; 
         let lastSendTime = 0;
         
         let lastMouthDist = null;
@@ -196,7 +212,6 @@
             drawPLDPoints(results.leftHandLandmarks, "#FFFF00", 3); 
             drawPLDPoints(results.rightHandLandmarks, "#FFFF00", 3);
 
-            // סטטוס המצבים
             let state = {
                 mouthMove: false,
                 faceTouch: false,
@@ -233,14 +248,13 @@
                     }
                     lastBodyCenter = bodyCenter;
 
-                    // 4. תנועת ידיים וזיהוי מגע בפנים
-                    const nosePose = results.poseLandmarks[0];
+                    // 4. תנועת ידיים ומגע בפנים (תוקן!)
                     const leftHandCenter = getCenter(results.leftHandLandmarks);
                     const rightHandCenter = getCenter(results.rightHandLandmarks);
 
                     [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
                         if (hand) {
-                            // תנועת יד
+                            // א. תנועת יד
                             const handCenter = getCenter(hand);
                             const lastHandCenter = (hand === results.leftHandLandmarks) ? lastLeftHand : lastRightHand;
                             if (lastHandCenter && getDistance(handCenter, lastHandCenter) / shoulderWidth > 0.08) {
@@ -249,15 +263,19 @@
                             if (hand === results.leftHandLandmarks) lastLeftHand = handCenter;
                             else lastRightHand = handCenter;
 
-                            // מגע בפנים
+                            // ב. מגע בפנים (ללא תלות בעומק מודל הגוף שקורס בהסתרה)
                             let isOverlapping = false;
                             for (let i of [8, 12, 16, 20]) { 
-                                if (getDistance(hand[i], noseFace) / faceWidth < 1.5) { isOverlapping = true; break; }
+                                // בודק אם קצה האצבע בתוך רדיוס הפנים
+                                if (getDistance(hand[i], noseFace) < faceWidth * 1.2) { 
+                                    isOverlapping = true; break; 
+                                }
                             }
-                            const poseWrist = (hand === results.leftHandLandmarks) ? results.poseLandmarks[15] : results.poseLandmarks[16];
-                            if (poseWrist && isOverlapping) {
-                                const distZ = Math.abs(poseWrist.z - nosePose.z) / shoulderWidth;
-                                if (distZ < 0.6) state.faceTouch = true;
+                            
+                            // מבחן פרספקטיבה: מוודא שהיד לא גדולה באופן חריג ביחס לפנים (כלומר לא מרחפת מול המצלמה)
+                            const handSize = getDistance(hand[0], hand[9]);
+                            if (isOverlapping && (handSize / faceWidth < 1.8)) {
+                                state.faceTouch = true;
                             }
                         }
                     });
@@ -285,7 +303,6 @@
 
             updateUI("ind-mouth", state.mouthMove, "תנועת פה", true);
             updateUI("ind-face-touch", state.faceTouch, "מגע בפנים", true);
-            
             updateUI("ind-head-move", state.headMove, "תנועת ראש", false);
             updateUI("ind-body-move", state.bodyMove, "תנועת גוף", false);
             updateUI("ind-hand-move", state.handMove, "תנועת יד", false);
@@ -301,8 +318,8 @@
                 mainStatusDiv.innerText = "שולח אות S!"; 
                 mainStatusDiv.style.color = "#FF9800"; 
                 mainStatusDiv.style.borderColor = "#FF9800"; 
-            } else if (!shouldSendS && (now - lastSendTime > 400)) { // השהיית חיווי ויזואלי למען נוחות קריאה
-                if(mainStatusDiv.innerText !== "סורק..." && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("טוען")) {
+            } else if (!shouldSendS && (now - lastSendTime > 400)) { 
+                if(mainStatusDiv.innerText !== "סורק..." && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("טוען") && !mainStatusDiv.innerText.includes("שגיאה")) {
                     mainStatusDiv.innerText = "סורק..."; 
                     mainStatusDiv.style.color = "white";
                     mainStatusDiv.style.borderColor = "#333";
