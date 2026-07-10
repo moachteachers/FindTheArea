@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PLD - ניטור מלא ושליטה בקצב</title>
+    <title>PLD - ניטור אחוד ובקרת שידור</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
@@ -53,7 +53,7 @@
             border: 1px solid #444;
         }
 
-        /* עיצוב חיווי הפנים המרכזי (המיקרוביט) */
+        /* חיווי מרכזי אחוד לכל המצבים */
         #main-status {
             position: absolute;
             top: 20px;
@@ -68,31 +68,11 @@
             z-index: 10;
             transition: 0.1s;
         }
-
-        /* עיצוב לוח הזיהוי ההיקפי (תצוגה בלבד) */
-        #peripheral-status {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 15px;
-            border-radius: 10px;
-            font-size: 16px;
-            text-align: right;
-            border-right: 4px solid #00BCD4;
-            color: #ddd;
-            z-index: 10;
-            min-width: 200px;
-        }
-        .peripheral-item { margin: 5px 0; transition: 0.1s; }
-        .active-peripheral { color: #00FFFF; font-weight: bold; text-shadow: 0 0 5px rgba(0,255,255,0.5); }
-        .trigger-item { color: #ddd; }
-        .active-trigger { color: #FF9800; font-weight: bold; text-shadow: 0 0 5px rgba(255,152,0,0.5); }
     </style>
 </head>
 <body>
 
-    <h1>מעבדת PLD: ניטור מקיף ובקרת שידור</h1>
+    <h1>מעבדת PLD: ניטור אחוד</h1>
     
     <div class="controls">
         <button id="connectBtn">1. התחבר למיקרוביט</button>
@@ -104,18 +84,6 @@
         <canvas id="output_canvas" width="1280" height="720"></canvas>
         
         <div id="main-status">ממתין להפעלה...</div>
-
-        <div id="peripheral-status">
-            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">משדר למיקרוביט (טריגר):</div>
-            <div id="ind-mouth" class="peripheral-item trigger-item">תנועת פה: --</div>
-            <div id="ind-face-touch" class="peripheral-item trigger-item">מגע בפנים: --</div>
-            
-            <div style="color: #888; font-size: 12px; margin-top: 15px; margin-bottom: 8px;">ניטור בלבד (ללא שידור):</div>
-            <div id="ind-head-move" class="peripheral-item">תנועת ראש: --</div>
-            <div id="ind-body-move" class="peripheral-item">תנועת גוף: --</div>
-            <div id="ind-hand-move" class="peripheral-item">תנועת יד: --</div>
-            <div id="ind-hand-touch" class="peripheral-item">מגע ביד: --</div>
-        </div>
     </div>
 
     <script>
@@ -134,58 +102,61 @@
                 writer = textEncoder.writable.getWriter();
                 
                 mainStatusDiv.innerText = "מחובר למיקרוביט!";
+                mainStatusDiv.style.color = "#4CAF50";
                 mainStatusDiv.style.borderColor = "#4CAF50";
             } catch (error) {
                 console.error("שגיאת התחברות:", error);
                 mainStatusDiv.innerText = "שגיאת התחברות.";
+                mainStatusDiv.style.color = "#F44336";
                 mainStatusDiv.style.borderColor = "#F44336";
             }
         });
 
-        // משתנה שנועל את השליחה למיקרוביט (Cooldown)
+        // משתנה נעילה למניעת הצפה (Cooldown)
         let isCooldown = false;
 
-        // פונקציה מיוחדת לשליחת הצרור והפעלת ההשהייה
-        async function triggerBurst() {
-            if (isCooldown) return; // אם אנחנו בהשהייה, לא עושים כלום
+        // פונקציה לשליחת צרור (Burst) מדויק - רצה רק בטריגרים של פנים!
+        async function triggerBurst(eventName) {
+            if (isCooldown) return; 
             
             isCooldown = true;
             
-            // עדכון הממשק לשלב הירייה
-            mainStatusDiv.innerText = "שולח 5 פעמים S!";
-            mainStatusDiv.style.color = "#FF9800";
+            mainStatusDiv.innerText = `${eventName} (שולח 3 פעמים S)`;
+            mainStatusDiv.style.color = "#FF9800"; // כתום
             mainStatusDiv.style.borderColor = "#FF9800";
 
             if (writer) {
-                // לולאה ששולחת את האות 5 פעמים
-                for (let i = 0; i < 5; i++) {
+                for (let i = 0; i < 3; i++) {
                     try {
                         await writer.write('S\r\n');
+                        console.log("נשלח: S");
                     } catch (err) {
                         console.error("שגיאת כתיבה:", err);
                     }
-                    // השהייה קטנטנה של 20ms בין שליחה לשליחה כדי לא להציף את החומרה
-                    await new Promise(resolve => setTimeout(resolve, 20));
+                    await new Promise(resolve => setTimeout(resolve, 100)); // 100ms בין אות לאות
                 }
+            } else {
+                await new Promise(resolve => setTimeout(resolve, 300));
             }
 
-            // עדכון הממשק לשלב ההשהייה
+            // שלב ההשהייה (Cooldown)
             mainStatusDiv.innerText = "השהייה (1 שנייה)...";
             mainStatusDiv.style.color = "#FFC107"; // צהוב
             mainStatusDiv.style.borderColor = "#FFC107";
 
-            // שחרור הנעילה אחרי שנייה אחת (1000 מילישניות)
+            // שחרור הנעילה אחרי שנייה אחת
             setTimeout(() => {
                 isCooldown = false;
             }, 1000);
         }
 
-        // --- 2. פרמטרים ומשתני עבר למעקב ---
+        // --- 2. לוגיקת מעקב הראייה הממוחשבת ---
         let lastMouthDist = null;
         let lastNosePos = null;
         let lastBodyCenter = null;
         let lastLeftHand = null;
         let lastRightHand = null;
+        let lastDetectionTime = 0; // למניעת הבהוב של כיתוב ה"סורק..."
 
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
@@ -251,43 +222,19 @@
                 
                 if (faceWidth > 0.02 && shoulderWidth > 0.05) { 
                     
-                    // 1. תנועת פה
+                    // --- טריגרים (גורמים לשליחת S) ---
                     const mouthDist = getDistance(results.faceLandmarks[13], results.faceLandmarks[14]);
                     if (lastMouthDist !== null && Math.abs(mouthDist - lastMouthDist) > faceWidth * 0.06) {
                         state.mouthMove = true;
                     }
                     lastMouthDist = mouthDist;
 
-                    // 2. תנועת ראש
                     const noseFace = results.faceLandmarks[1];
-                    if (lastNosePos && getDistance(noseFace, lastNosePos) / faceWidth > 0.05) {
-                        state.headMove = true;
-                    }
-                    lastNosePos = noseFace;
-
-                    // 3. תנועת גוף
-                    const bodyCenter = getCenter([results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]);
-                    if (lastBodyCenter && bodyCenter && getDistance(bodyCenter, lastBodyCenter) / shoulderWidth > 0.03) {
-                        state.bodyMove = true;
-                    }
-                    lastBodyCenter = bodyCenter;
-
-                    // 4. תנועת ידיים ומגע בפנים
                     const leftHandCenter = getCenter(results.leftHandLandmarks);
                     const rightHandCenter = getCenter(results.rightHandLandmarks);
 
                     [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
                         if (hand) {
-                            // תנועת יד
-                            const handCenter = getCenter(hand);
-                            const lastHandCenter = (hand === results.leftHandLandmarks) ? lastLeftHand : lastRightHand;
-                            if (lastHandCenter && getDistance(handCenter, lastHandCenter) / shoulderWidth > 0.08) {
-                                state.handMove = true;
-                            }
-                            if (hand === results.leftHandLandmarks) lastLeftHand = handCenter;
-                            else lastRightHand = handCenter;
-
-                            // מגע בפנים
                             let isOverlapping = false;
                             for (let i of [8, 12, 16, 20]) { 
                                 if (getDistance(hand[i], noseFace) < faceWidth * 1.2) { isOverlapping = true; break; }
@@ -299,49 +246,68 @@
                         }
                     });
 
-                    // 5. מגע ביד
-                    if (leftHandCenter && rightHandCenter) {
-                        if (getDistance(leftHandCenter, rightHandCenter) / shoulderWidth < 0.35) {
-                            state.handTouch = true;
+                    // --- ניטור היקפי (תצוגה בלבד) ---
+                    if (lastNosePos && getDistance(noseFace, lastNosePos) / faceWidth > 0.05) state.headMove = true;
+                    lastNosePos = noseFace;
+
+                    const bodyCenter = getCenter([results.poseLandmarks[11], results.poseLandmarks[12], results.poseLandmarks[23], results.poseLandmarks[24]]);
+                    if (lastBodyCenter && bodyCenter && getDistance(bodyCenter, lastBodyCenter) / shoulderWidth > 0.03) state.bodyMove = true;
+                    lastBodyCenter = bodyCenter;
+
+                    [results.leftHandLandmarks, results.rightHandLandmarks].forEach(hand => {
+                        if (hand) {
+                            const handCenter = getCenter(hand);
+                            const lastHandCenter = (hand === results.leftHandLandmarks) ? lastLeftHand : lastRightHand;
+                            if (lastHandCenter && getDistance(handCenter, lastHandCenter) / shoulderWidth > 0.08) state.handMove = true;
+                            if (hand === results.leftHandLandmarks) lastLeftHand = handCenter;
+                            else lastRightHand = handCenter;
                         }
+                    });
+
+                    if (leftHandCenter && rightHandCenter && getDistance(leftHandCenter, rightHandCenter) / shoulderWidth < 0.35) {
+                        state.handTouch = true;
                     }
                 }
             }
 
-            // --- עדכון UI במסך לחלונית הצדדית ---
-            const updateUI = (id, isActive, text, isTrigger) => {
-                const el = document.getElementById(id);
-                if (isActive) {
-                    el.innerText = `🟢 ${text}`;
-                    el.className = isTrigger ? "peripheral-item active-trigger" : "peripheral-item active-peripheral";
-                } else {
-                    el.innerText = `⚪ ${text}`;
-                    el.className = isTrigger ? "peripheral-item trigger-item" : "peripheral-item";
+            // --- 3. עדכון UI והפעלת פקודות ---
+            if (!isCooldown) {
+                let triggerText = "";
+                let nonTriggerText = "";
+
+                // קביעת טקסט לטריגרים
+                if (state.mouthMove) triggerText = "תנועת פה!";
+                else if (state.faceTouch) triggerText = "מגע בפנים!";
+
+                // קביעת טקסט לניטור (אם אין טריגר פעיל)
+                if (!triggerText) {
+                    if (state.handTouch) nonTriggerText = "מגע בידיים";
+                    else if (state.handMove) nonTriggerText = "תנועת ידיים";
+                    else if (state.headMove) nonTriggerText = "תנועת ראש";
+                    else if (state.bodyMove) nonTriggerText = "תנועת גוף";
                 }
-            };
 
-            updateUI("ind-mouth", state.mouthMove, "תנועת פה", true);
-            updateUI("ind-face-touch", state.faceTouch, "מגע בפנים", true);
-            updateUI("ind-head-move", state.headMove, "תנועת ראש", false);
-            updateUI("ind-body-move", state.bodyMove, "תנועת גוף", false);
-            updateUI("ind-hand-move", state.handMove, "תנועת יד", false);
-            updateUI("ind-hand-touch", state.handTouch, "מגע ביד", false);
-
-            // --- בדיקת טריגר מרכזי ושליחה למיקרוביט ---
-            const shouldSendS = state.mouthMove || state.faceTouch;
-
-            if (shouldSendS && !isCooldown) {
-                // אם זוהה טריגר ואין השהייה, מפעילים את פונקציית הירי
-                triggerBurst();
-            } else if (!shouldSendS && !isCooldown) {
-                // אם הכל שקט ואין השהייה, מחזירים את התצוגה המרכזית למצב "סורק"
-                if(mainStatusDiv.innerText !== "סורק..." && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("טוען") && !mainStatusDiv.innerText.includes("שגיאה")) {
-                    mainStatusDiv.innerText = "סורק..."; 
-                    mainStatusDiv.style.color = "white";
-                    mainStatusDiv.style.borderColor = "#333";
+                if (triggerText) {
+                    // הפעלת פונקציית הירי (משנה את הסטטוס אוטומטית בפנים)
+                    triggerBurst(triggerText);
+                    lastDetectionTime = Date.now();
+                } 
+                else if (nonTriggerText) {
+                    // הצגת ניטור בלבד - לא משדר!
+                    mainStatusDiv.innerText = `זיהוי: ${nonTriggerText}`;
+                    mainStatusDiv.style.color = "#00BCD4"; // טורקיז
+                    mainStatusDiv.style.borderColor = "#00BCD4";
+                    lastDetectionTime = Date.now();
+                } 
+                else if (Date.now() - lastDetectionTime > 400) {
+                    // אם הכל שקט יותר מ-400ms, חזור למצב סורק
+                    if(mainStatusDiv.innerText !== "סורק..." && !mainStatusDiv.innerText.includes("מחובר") && !mainStatusDiv.innerText.includes("שגיאה")) {
+                        mainStatusDiv.innerText = "סורק..."; 
+                        mainStatusDiv.style.color = "white";
+                        mainStatusDiv.style.borderColor = "#333";
+                    }
                 }
             }
-            // (אם isCooldown שווה true, לא עושים כאן כלום, ונותנים להודעת ה"השהייה" להישאר על המסך)
         }
     </script>
 </body>
